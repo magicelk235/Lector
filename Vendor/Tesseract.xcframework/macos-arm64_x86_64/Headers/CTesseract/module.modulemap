@@ -1,0 +1,5 @@
+module CTesseract {
+    header "capi.h"
+    link "c++"
+    export *
+}
