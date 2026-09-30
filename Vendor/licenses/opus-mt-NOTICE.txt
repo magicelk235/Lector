@@ -1,0 +1,19 @@
+Opus-MT translation models
+
+Hover Lens downloads Opus-MT models on demand for offline translation. They are not
+bundled with the app.
+
+Models: Opus-MT, by the Language Technology Research Group at the University of Helsinki
+(Helsinki-NLP). https://github.com/Helsinki-NLP/Opus-MT
+
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0).
+https://creativecommons.org/licenses/by/4.0/
+
+Changes: the original models were converted to the ONNX format by their publishers on
+Hugging Face (Xenova, onnx-community, R4kSo1997, TigreGotico, fintutto). Hover Lens uses
+those conversions unmodified, at the exact revisions pinned in OpusMTCatalog+Models.swift.
+
+Reference:
+Jörg Tiedemann and Santhosh Thottingal. 2020. OPUS-MT — Building open translation
+services for the World. In Proceedings of the 22nd Annual Conference of the European
+Association for Machine Translation (EAMT), Lisbon, Portugal.
