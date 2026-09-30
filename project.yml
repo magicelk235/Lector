@@ -1,4 +1,4 @@
-name: HoverLens
+name: Lector
 options:
   bundleIdPrefix: com.magicelklabs
   deploymentTarget:
@@ -12,10 +12,10 @@ settings:
     DEVELOPMENT_TEAM: "V8K8L3ZSD5"
     CODE_SIGN_STYLE: Automatic
 packages:
-  HoverLensKit:
-    path: HoverLensKit
+  LectorKit:
+    path: LectorKit
 targets:
-  HoverLens:
+  Lector:
     type: application
     platform: macOS
     sources:
@@ -27,12 +27,12 @@ targets:
         type: folder
         buildPhase: resources
     dependencies:
-      - package: HoverLensKit
+      - package: LectorKit
     info:
       path: Info.plist
       properties:
-        CFBundleName: Hover Lens
-        CFBundleDisplayName: Hover Lens
+        CFBundleName: Lector
+        CFBundleDisplayName: Lector
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "15.0"
@@ -40,34 +40,34 @@ targets:
         LSUIElement: true
         NSHumanReadableCopyright: "© Magicelk Labs"
     entitlements:
-      path: HoverLens.entitlements
+      path: Lector.entitlements
       properties:
         # Unsandboxed: Screen Recording and global hot keys are simpler outside the
         # App Store sandbox. Direct distribution only.
         com.apple.security.app-sandbox: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.magicelklabs.hoverlens
+        PRODUCT_BUNDLE_IDENTIFIER: com.magicelklabs.lector
         ENABLE_HARDENED_RUNTIME: true
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         SWIFT_STRICT_CONCURRENCY: complete
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-  HoverLensTests:
+  LectorTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: Tests/HoverLensTests
+      - path: Tests/LectorTests
     dependencies:
-      - target: HoverLens
+      - target: Lector
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
 schemes:
-  HoverLens:
+  Lector:
     build:
       targets:
-        HoverLens: all
+        Lector: all
     test:
       targets:
-        - HoverLensTests
-        - package: HoverLensKit/HoverLensKitTests
+        - LectorTests
+        - package: LectorKit/LectorKitTests

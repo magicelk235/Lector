@@ -1,6 +1,6 @@
 Opus-MT translation models
 
-Hover Lens downloads Opus-MT models on demand for offline translation. They are not
+Lector downloads Opus-MT models on demand for offline translation. They are not
 bundled with the app.
 
 Models: Opus-MT, by the Language Technology Research Group at the University of Helsinki
@@ -10,7 +10,7 @@ Licence: Creative Commons Attribution 4.0 International (CC BY 4.0).
 https://creativecommons.org/licenses/by/4.0/
 
 Changes: the original models were converted to the ONNX format by their publishers on
-Hugging Face (Xenova, onnx-community, R4kSo1997, TigreGotico, fintutto). Hover Lens uses
+Hugging Face (Xenova, onnx-community, R4kSo1997, TigreGotico, fintutto). Lector uses
 those conversions unmodified, at the exact revisions pinned in OpusMTCatalog+Models.swift.
 
 Reference:

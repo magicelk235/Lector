@@ -1,5 +1,5 @@
 import XCTest
-@testable import HoverLensKit
+@testable import LectorKit
 
 /// The tokenizer against a tiny Marian tokenizer built by the reference SentencePiece
 /// library (Scripts/make-opus-tokenizer-fixture.py). The expected ids are what that library

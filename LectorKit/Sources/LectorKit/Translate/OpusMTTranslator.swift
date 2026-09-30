@@ -42,7 +42,7 @@ public final class OpusMTTranslator: Translator {
     private let cache = ModelCache(capacity: 4)
     /// One translation runs at a time: models share ONNX Runtime's thread pool, so two
     /// at once would each take twice as long and finish no sooner.
-    private let inference = DispatchQueue(label: "HoverLens.OpusMT.inference", qos: .userInitiated)
+    private let inference = DispatchQueue(label: "Lector.OpusMT.inference", qos: .userInitiated)
     private let downloads = Mutex<[String: Task<Void, any Error>]>([:])
 
     public convenience init(modelsDirectory: URL) {

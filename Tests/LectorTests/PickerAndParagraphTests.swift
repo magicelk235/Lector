@@ -1,7 +1,7 @@
 import CoreGraphics
-import HoverLensKit
+import LectorKit
 import XCTest
-@testable import HoverLens
+@testable import Lector
 
 /// Builds a capture from lines of words laid out left to right, one rect per word.
 private func capture(_ lines: [(y: CGFloat, x: CGFloat, words: [String])],

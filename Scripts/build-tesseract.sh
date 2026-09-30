@@ -1,11 +1,11 @@
 #!/bin/bash
-# Builds the OCR engine HoverLensKit links, and fetches the models it ships, so that
+# Builds the OCR engine LectorKit links, and fetches the models it ships, so that
 # nothing the app loads at runtime comes from the machine that built it.
 #
 # Produces, both commit-ready:
 #   Vendor/Tesseract.xcframework                        static Leptonica + Tesseract,
 #                                                        one arm64 + x86_64 library
-#   HoverLensKit/Sources/HoverLensKit/Resources/tessdata pinned tessdata_fast models
+#   LectorKit/Sources/LectorKit/Resources/tessdata pinned tessdata_fast models
 #
 # Homebrew (or anything else) supplies cmake and ninja to *run* the build and nothing
 # that ends up *in* it: every optional dependency — libcurl, libarchive, libtiff, the
@@ -74,7 +74,7 @@ WORK="$VENDOR/build"
 DOWNLOADS="$WORK/downloads"
 XCFRAMEWORK="$VENDOR/Tesseract.xcframework"
 LICENSES="$VENDOR/licenses"
-TESSDATA="$ROOT/HoverLensKit/Sources/HoverLensKit/Resources/tessdata"
+TESSDATA="$ROOT/LectorKit/Sources/LectorKit/Resources/tessdata"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }

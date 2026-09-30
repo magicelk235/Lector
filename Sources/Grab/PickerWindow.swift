@@ -1,5 +1,5 @@
 import AppKit
-import HoverLensKit
+import LectorKit
 
 /// Word picking for a multi-line grab. The captured image is shown back exactly where
 /// it was taken, so the screen looks untouched apart from a dimmed surround and the

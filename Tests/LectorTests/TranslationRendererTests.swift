@@ -1,7 +1,7 @@
 import CoreGraphics
-import HoverLensKit
+import LectorKit
 import XCTest
-@testable import HoverLens
+@testable import Lector
 
 final class TranslationRendererTests: XCTestCase {
     private func tokens(_ text: String) -> [String] {

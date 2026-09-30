@@ -1,5 +1,5 @@
 import AppKit
-import HoverLensKit
+import LectorKit
 import SwiftUI
 import Translation
 

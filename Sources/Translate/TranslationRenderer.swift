@@ -1,5 +1,5 @@
 import AppKit
-import HoverLensKit
+import LectorKit
 
 /// Paints translated paragraphs over a capture and records where every word landed,
 /// so the result can be picked from exactly like recognised text.

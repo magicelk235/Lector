@@ -23,7 +23,7 @@ from pathlib import Path
 
 import sentencepiece as spm
 
-OUT = Path(__file__).resolve().parent.parent / "HoverLensKit/Tests/HoverLensKitTests/Fixtures/opus-tokenizer"
+OUT = Path(__file__).resolve().parent.parent / "LectorKit/Tests/LectorKitTests/Fixtures/opus-tokenizer"
 
 CORPUS = """\
 Hello world, how are you today?

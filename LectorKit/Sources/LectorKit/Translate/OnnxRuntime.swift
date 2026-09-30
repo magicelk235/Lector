@@ -53,7 +53,7 @@ enum OnnxRuntime {
             // more than it translates, so waking the pool is the cheaper side of that.
             try check(api.SetGlobalSpinControl(threading, 0))
             var environment: OpaquePointer?
-            try check(api.CreateEnvWithGlobalThreadPools(ORT_LOGGING_LEVEL_ERROR, "HoverLens", threading, &environment))
+            try check(api.CreateEnvWithGlobalThreadPools(ORT_LOGGING_LEVEL_ERROR, "Lector", threading, &environment))
             guard let environment else { throw OnnxRuntimeError(description: "CreateEnv returned nothing") }
             handle = environment
         }

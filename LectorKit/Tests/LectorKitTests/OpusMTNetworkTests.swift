@@ -1,22 +1,22 @@
 import Synchronization
 import XCTest
-@testable import HoverLensKit
+@testable import LectorKit
 
 /// Downloads real models from Hugging Face and translates with them. Several hundred
 /// megabytes on first run, so opt-in:
 ///
-///     HOVERLENS_NETWORK_TESTS=1 swift test --package-path HoverLensKit --filter OpusMTNetworkTests
+///     LECTOR_NETWORK_TESTS=1 swift test --package-path LectorKit --filter OpusMTNetworkTests
 ///
 /// Models are kept in the temporary directory between runs; delete
-/// `$TMPDIR/HoverLensOpusMTModels` to exercise the download again.
+/// `$TMPDIR/LectorOpusMTModels` to exercise the download again.
 final class OpusMTNetworkTests: XCTestCase {
     private var translator: OpusMTTranslator!
 
     override func setUpWithError() throws {
-        guard ProcessInfo.processInfo.environment["HOVERLENS_NETWORK_TESTS"] == "1" else {
-            throw XCTSkip("Set HOVERLENS_NETWORK_TESTS=1 to download models and translate with them")
+        guard ProcessInfo.processInfo.environment["LECTOR_NETWORK_TESTS"] == "1" else {
+            throw XCTSkip("Set LECTOR_NETWORK_TESTS=1 to download models and translate with them")
         }
-        let directory = FileManager.default.temporaryDirectory.appending(path: "HoverLensOpusMTModels")
+        let directory = FileManager.default.temporaryDirectory.appending(path: "LectorOpusMTModels")
         translator = OpusMTTranslator(modelsDirectory: directory)
     }
 

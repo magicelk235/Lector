@@ -1,4 +1,4 @@
-# Hover Lens
+# Lector
 
 Grab or translate any text on your screen — a game menu, a scanned PDF, a video subtitle, an app in a language you don't read.
 
@@ -36,13 +36,13 @@ Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen). The Xcode project is
 ```sh
 Scripts/build-tesseract.sh   # once: universal static Tesseract + models into Vendor/
 xcodegen generate
-xcodebuild -scheme HoverLens -destination 'generic/platform=macOS' build
-swift test --package-path HoverLensKit --scratch-path ~/Library/Caches/HoverLensKit-build
+xcodebuild -scheme Lector -destination 'generic/platform=macOS' build
+swift test --package-path LectorKit --scratch-path ~/Library/Caches/LectorKit-build
 ```
 
 The `--scratch-path` keeps SwiftPM's build out of an iCloud-synced folder, where Finder metadata breaks resource-bundle signing.
 
-`HoverLensKit` holds OCR (Vision + Tesseract, reading order, the recognised-text model) and the offline translator (ONNX Runtime + Opus-MT), with no UI, tested from the command line against committed fixtures. The app on top is the menu-bar agent: hotkeys, the system screenshot capture, the word picker, the translation card, settings.
+`LectorKit` holds OCR (Vision + Tesseract, reading order, the recognised-text model) and the offline translator (ONNX Runtime + Opus-MT), with no UI, tested from the command line against committed fixtures. The app on top is the menu-bar agent: hotkeys, the system screenshot capture, the word picker, the translation card, settings.
 
 Everything native is linked statically for both architectures, so the app runs on any Mac with nothing installed.
 

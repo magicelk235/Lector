@@ -1,7 +1,7 @@
 import CoreGraphics
 import ImageIO
 import XCTest
-@testable import HoverLensKit
+@testable import LectorKit
 
 /// Reads the committed screen fixtures end to end, through the bundled Tesseract
 /// models rather than anything installed on the machine.

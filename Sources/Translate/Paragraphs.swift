@@ -1,5 +1,5 @@
 import CoreGraphics
-import HoverLensKit
+import LectorKit
 
 /// Rebuilds sentences that OCR split into visual lines, so a wrapped paragraph is
 /// translated as one thought instead of line fragments — while a menu, list or UI

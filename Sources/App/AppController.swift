@@ -1,5 +1,5 @@
 import AppKit
-import HoverLensKit
+import LectorKit
 
 /// Owns the two hotkeys and runs what they start: the system screenshot crosshair,
 /// then copying (grab) or translating in place (translate) what the user picked.

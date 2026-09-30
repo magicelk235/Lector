@@ -1,5 +1,5 @@
 import XCTest
-@testable import HoverLensKit
+@testable import LectorKit
 
 /// Which models a language pair is translated through, and what `availability` says about
 /// it, all without a network.

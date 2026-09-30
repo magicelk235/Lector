@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["pycountry"]
 # ///
-"""Regenerates HoverLensKit's table of downloadable Opus-MT translation models.
+"""Regenerates LectorKit's table of downloadable Opus-MT translation models.
 
     uv run Scripts/generate-opus-mt-catalog.py
 
@@ -21,7 +21,7 @@ two never converted. Every export is checked against the Helsinki original befor
 accepted: its tokenizer files must be byte-identical and its config must describe the same
 network, so an account cannot swap in a different model under the right name.
 
-Responses are cached under ~/.cache/hoverlens-opus-catalog, so a rerun is quick and does
+Responses are cached under ~/.cache/lector-opus-catalog, so a rerun is quick and does
 not trip the Hub's rate limit (500 API calls per five minutes, anonymously).
 """
 
@@ -43,8 +43,8 @@ from pathlib import Path
 import pycountry
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "HoverLensKit/Sources/HoverLensKit/Translate/OpusMTCatalog+Models.swift"
-CACHE = Path(os.environ.get("OPUS_CATALOG_CACHE", "~/.cache/hoverlens-opus-catalog")).expanduser()
+OUTPUT = ROOT / "LectorKit/Sources/LectorKit/Translate/OpusMTCatalog+Models.swift"
+CACHE = Path(os.environ.get("OPUS_CATALOG_CACHE", "~/.cache/lector-opus-catalog")).expanduser()
 HUB = "https://huggingface.co"
 
 # Most trusted first. Among exports of the same Helsinki model the earliest account wins.
@@ -106,7 +106,7 @@ def _get(url: str, *, api: bool, allow_missing: bool) -> tuple[bytes | None, dic
             _last_api_call = time.time()
         backoff = min(60, 2 ** (attempt + 1))
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "hoverlens-catalog/1"})
+            request = urllib.request.Request(url, headers={"User-Agent": "lector-catalog/1"})
             with urllib.request.urlopen(request, timeout=120) as response:
                 return response.read(), dict(response.headers)
         except urllib.error.HTTPError as error:

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct HoverLensApp: App {
+struct LectorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {

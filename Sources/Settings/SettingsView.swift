@@ -1,4 +1,4 @@
-import HoverLensKit
+import LectorKit
 import ServiceManagement
 import SwiftUI
 
@@ -188,7 +188,7 @@ private struct AcknowledgementsSettings: View {
                     }
                 }
             } footer: {
-                Text("Hover Lens is built on these open-source projects.")
+                Text("Lector is built on these open-source projects.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

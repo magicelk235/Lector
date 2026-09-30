@@ -1,5 +1,5 @@
 import AppKit
-import HoverLensKit
+import LectorKit
 import SwiftUI
 
 /// Translation written over the original, the way Google Lens does it — for every

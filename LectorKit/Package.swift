@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "HoverLensKit",
+    name: "LectorKit",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "HoverLensKit", targets: ["HoverLensKit"])
+        .library(name: "LectorKit", targets: ["LectorKit"])
     ],
     targets: [
         .target(
-            name: "HoverLensKit",
+            name: "LectorKit",
             dependencies: ["CTesseract", "COnnxRuntime"],
             // Tesseract models for the scripts Vision cannot read; built and pinned by
             // Scripts/build-tesseract.sh.
@@ -27,8 +27,8 @@ let package = Package(
         ),
         .target(name: "COnnxRuntime", dependencies: ["onnxruntime"], linkerSettings: [.linkedLibrary("c++")]),
         .testTarget(
-            name: "HoverLensKitTests",
-            dependencies: ["HoverLensKit"],
+            name: "LectorKitTests",
+            dependencies: ["LectorKit"],
             resources: [.copy("Fixtures")]
         )
     ]

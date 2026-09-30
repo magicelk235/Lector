@@ -1,5 +1,5 @@
 import CoreGraphics
-import HoverLensKit
+import LectorKit
 
 /// A contiguous run of words, in reading order, chosen by dragging across them —
 /// the same model as selecting text in a document, so RTL and multi-column captures

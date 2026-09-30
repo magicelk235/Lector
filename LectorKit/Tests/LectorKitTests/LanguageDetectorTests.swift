@@ -1,5 +1,5 @@
 import XCTest
-@testable import HoverLensKit
+@testable import LectorKit
 
 final class LanguageDetectorTests: XCTestCase {
     private func detect(_ text: String, preferring: [String] = ["en", "he"]) -> String? {
