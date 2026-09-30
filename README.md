@@ -1,51 +1,90 @@
 # Lector
 
-Grab or translate any text on your screen — a game menu, a scanned PDF, a video subtitle, an app in a language you don't read.
+Grab or translate any text on your Mac's screen: a game menu, a scanned PDF, a
+video subtitle, an app in a language you don't read.
 
-macOS 15 or later. Apple Silicon and Intel.
+Lector sits in the menu bar. Press ⌘⇧2 to copy text from any part of the
+screen, or ⌘⇧1 to read it translated right where it is. Both shortcuts open
+macOS's own ⌘⇧4 crosshair, and Lector reads and translates the text on your
+Mac.
 
-## How to use it
+## Requirements
 
-| Shortcut | What it does |
-|---|---|
-| **⌘⇧2** | **Grab text.** You get macOS's own ⌘⇧4 crosshair: drag a box, or press Space and click a window. One line is copied straight away. More than one line and the words light up: drag across the ones you want, then press ⌘C to copy them. Nothing is selected to begin with; ⌘A selects everything, double-click picks a line. Esc or a click outside cancels. |
-| **⌘⇧1** | **Translate.** Same crosshair. The translation is written over the original, each paragraph in the page's own colours, and you pick from it exactly like grabbing text — drag across words, then ⌘C to copy; double-click for a paragraph. Space flips to the original and back; Esc or a click outside closes. The target language is set in Settings. |
+- macOS 15 or later, on Apple Silicon or Intel.
+- The Screen Recording permission. Lector asks for it the first time it runs,
+  and macOS needs the app relaunched after you grant it. Lector doesn't need
+  Accessibility.
 
-Both shortcuts can be changed in Settings. Esc cancels at any point.
+## Grab text with ⌘⇧2
+
+You get the ⌘⇧4 crosshair. Drag a box around the text, or press Space and click
+a window.
+
+A single line goes straight to the clipboard. With more than one line, the words
+light up so you can pick the ones you want: drag across them and press ⌘C.
+Nothing is selected at first. ⌘A selects everything, and a double-click picks a
+whole line. Esc or a click outside cancels.
+
+## Translate with ⌘⇧1
+
+Same crosshair. Lector paints the translation over the original, a bit like
+Google Lens: each paragraph is covered in its own background colour and
+rewritten in a matching text colour. You copy from it the way you grab text, by
+dragging across words and pressing ⌘C, or by double-clicking a paragraph. Space
+switches between the translation and the original. Esc or a click outside
+closes it.
+
+Choose the language to translate into in Settings › Translation. You can change
+both shortcuts in Settings › General.
 
 ## Languages
 
-Text is read in any script the screen shows. Apple's Vision reads Latin, Cyrillic, Chinese, Japanese, Korean and the rest of its set; a bundled Tesseract reads what Vision can't — Hebrew, Arabic, Persian, the Indic scripts, Greek, Georgian, Armenian, Thai, Khmer, Ethiopic and more.
+Lector reads whatever script is on screen. Apple's Vision handles Latin,
+Cyrillic, Chinese, Japanese, Korean and the rest of its set. A bundled Tesseract
+reads the scripts Vision can't, including Hebrew, Arabic, Persian, the Indic
+scripts, Greek, Georgian, Armenian, Thai, Khmer and Ethiopic.
 
-Translation is as fast as the language pack allows. With the offline Opus-MT pack for a language pair on the Mac, a draft translation appears almost at once (about a quarter of a second for several paragraphs), and Apple's on-device Translation — better, but about a second per paragraph — replaces it paragraph by paragraph as it finishes. The pack for a pair downloads on its own in the background the first time you translate it (roughly 150 MB); until then Apple's paragraphs appear one by one. Pairs Apple doesn't cover use the pack alone. Pressing ⌘⇧1 also starts loading the models while you drag.
+Translation uses two engines. Apple's on-device Translation gives the better
+result but takes about a second per paragraph. An offline Opus-MT language pack
+is much faster, with a draft of several paragraphs in about a quarter of a
+second, and Apple's translation then replaces the draft one paragraph at a time.
+The pack for a language pair is roughly 150 MB and downloads in the background
+the first time you translate that pair. Until it's there, Apple's paragraphs
+appear one by one. Pairs that Apple doesn't support use the pack alone. Settings
+› Translation lists the packs you have and can remove them.
+
+Lector starts loading the models as soon as you press ⌘⇧1, while you're still
+dragging.
 
 ## Privacy
 
-The screen is captured only when you press a shortcut, using macOS's own screenshot tool. The capture lands in a private temporary file that is read and deleted immediately. Nothing you capture is kept, logged or sent anywhere. The only network use is downloading language packs, which happens on its own the first time you translate from a language; your text is never sent.
+Lector captures the screen only when you press one of its shortcuts, and it uses
+macOS's screenshot tool to do it. The capture goes to a private temporary file
+that Lector reads and deletes straight away. Nothing you capture is kept, logged
+or sent anywhere, and there's no history and no analytics.
+
+The only thing Lector downloads is language packs, from Hugging Face. Your text
+never leaves the Mac.
 
 ## Limitations
 
 - Handwriting and vertical Japanese don't read reliably.
 - Heavily stylised game fonts sometimes read badly or not at all.
-- Offline translation between two languages that aren't English goes through English, which loses some nuance.
+- Offline translation between two languages that aren't English goes through
+  English, which loses some nuance.
 
-## Development
+## Security
 
-Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen). The Xcode project is generated — never edit it by hand.
+Please report vulnerabilities privately, as described in
+[SECURITY.md](SECURITY.md), and not in a public issue.
 
-```sh
-Scripts/build-tesseract.sh   # once: universal static Tesseract + models into Vendor/
-xcodegen generate
-xcodebuild -scheme Lector -destination 'generic/platform=macOS' build
-swift test --package-path LectorKit --scratch-path ~/Library/Caches/LectorKit-build
-```
+## License
 
-The `--scratch-path` keeps SwiftPM's build out of an iCloud-synced folder, where Finder metadata breaks resource-bundle signing.
+Licensed under the [PolyForm Shield License 1.0.0](LICENSE). Copyright (c) 2026
+Yehonatan Cohen (magicelk235). You may use, modify and share Lector, but you may
+not use it to build a product that competes with Lector or with the author's
+other products.
 
-`LectorKit` holds OCR (Vision + Tesseract, reading order, the recognised-text model) and the offline translator (ONNX Runtime + Opus-MT), with no UI, tested from the command line against committed fixtures. The app on top is the menu-bar agent: hotkeys, the system screenshot capture, the word picker, the translation card, settings.
-
-Everything native is linked statically for both architectures, so the app runs on any Mac with nothing installed.
-
-## Licence
-
-© Magicelk Labs. All rights reserved. Third-party licences (Tesseract, Leptonica, ONNX Runtime, Opus-MT models) are in `Vendor/licenses`, ship inside the app, and are shown in Settings › Acknowledgements.
+Tesseract, Leptonica, ONNX Runtime and the Opus-MT models keep their own
+licenses. Those are in `Vendor/licenses`, ship inside the app, and are shown in
+Settings › Acknowledgements.

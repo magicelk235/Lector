@@ -38,7 +38,7 @@ targets:
         LSMinimumSystemVersion: "15.0"
         LSApplicationCategoryType: public.app-category.productivity
         LSUIElement: true
-        NSHumanReadableCopyright: "© Magicelk Labs"
+        NSHumanReadableCopyright: "Copyright © 2026 Yehonatan Cohen. PolyForm Shield License 1.0.0."
     entitlements:
       path: Lector.entitlements
       properties:
