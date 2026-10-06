@@ -14,6 +14,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             TranslationSettings(store: store, offline: controller.offline)
                 .tabItem { Label("Translation", systemImage: "character.bubble") }
+            LicenseView(license: controller.license, usage: controller.usage)
+                .tabItem { Label("License", systemImage: "key") }
             AcknowledgementsSettings()
                 .tabItem { Label("Acknowledgements", systemImage: "heart.text.square") }
         }

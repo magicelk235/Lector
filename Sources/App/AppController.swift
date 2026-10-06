@@ -15,8 +15,12 @@ final class AppController {
     private(set) var conflicts: Set<UInt32> = []
 
     let offline: OpusMTTranslator
+    let license: LicenseManager
+    let usage: UsageMeter
 
     var onNeedsPermission: (() -> Void)?
+    /// A shortcut was refused because the plan's limit for it was reached.
+    var onLimit: ((Limit) -> Void)?
     /// The user picked the language an app's text is in, by bundle identifier, or went
     /// back to detecting it (nil): to be remembered in the settings.
     var onChooseSource: ((_ app: String, _ language: String?) -> Void)?
@@ -50,8 +54,10 @@ final class AppController {
     private static let liveID: UInt32 = 3
     private static let escapeID: UInt32 = 4
 
-    init(settings: AppSettings) {
+    init(settings: AppSettings, license: LicenseManager, usage: UsageMeter) {
         self.settings = settings
+        self.license = license
+        self.usage = usage
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         offline = OpusMTTranslator(modelsDirectory: support
             .appendingPathComponent(AppConstants.supportFolder, isDirectory: true)
@@ -152,6 +158,10 @@ final class AppController {
         }
         // The system crosshair is already up; a second press shouldn't stack another.
         guard !isCapturing else { return }
+        if let limit = limit(for: purpose) {
+            onLimit?(limit)
+            return
+        }
         guard CGPreflightScreenCaptureAccess() else {
             onNeedsPermission?()
             return
@@ -206,7 +216,10 @@ final class AppController {
             let pointer = CGRect(origin: capture.pointer, size: .zero)
             if text.isEmpty {
                 Toast.shared.show("No text found", systemImage: "text.magnifyingglass", near: pointer, kind: .notice)
-            } else if text.isSingleLine {
+                return
+            }
+            usage.record(.grab)
+            if text.isSingleLine {
                 Self.copy(text.text, near: pointer)
             } else {
                 let rect = await located
@@ -230,6 +243,11 @@ final class AppController {
         // that still reached it must not open a second overlay over the first.
         window.picker.onTranslate = { [weak self, weak window] in
             guard let self, let window, picker === window else { return }
+            if let limit = limit(for: .translate) {
+                closePicker()
+                onLimit?(limit)
+                return
+            }
             translateInPlace(image, at: rect, text: text, app: app)
         }
         picker = window
@@ -262,6 +280,7 @@ final class AppController {
                 return
             }
             let blocks = Paragraphs.blocks(text)
+            usage.record(.translation)
             job.start(paragraphs: blocks.map(\.text), choosing: chosenSource(for: app))
             let rect = await located
             guard !Task.isCancelled else {
@@ -278,6 +297,7 @@ final class AppController {
     private func translateInPlace(_ image: CGImage, at rect: CGRect, text: RecognizedText, app: String?) {
         let blocks = Paragraphs.blocks(text)
         let job = makeJob()
+        usage.record(.translation)
         job.start(paragraphs: blocks.map(\.text), choosing: chosenSource(for: app))
         showOverlay(job: job, image: image, at: rect, text: text, blocks: blocks, app: app)
         picker?.dismiss()
@@ -328,6 +348,11 @@ final class AppController {
     /// What the user said this app's text is in, if they did.
     private func chosenSource(for app: String?) -> Locale.Language? {
         app.flatMap { settings.sourceLanguages[$0] }.map { Locale.Language(identifier: $0) }
+    }
+
+    /// Why the plan won't let `purpose` start now, if it won't.
+    private func limit(for purpose: Purpose) -> Limit? {
+        license.tier.limit(for: purpose, grabs: usage.used(.grab), translations: usage.used(.translation))
     }
 
     /// Starts loading the translation models for the likeliest language pair the moment

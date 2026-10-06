@@ -8,5 +8,7 @@ enum AppConstants {
     /// Folder under Application Support for downloaded translation models.
     static let supportFolder = "Lector"
     static let supportURL = URL(string: "https://magicelk235.github.io/lector")!
-    static let price = "$15"
+    /// Where Text and Translate are bought, and the Text-to-Translate upgrade.
+    static let storeURL = URL(string: "https://magicelk235.gumroad.com/l/lector")!
+    static let upgradeURL = URL(string: "https://magicelk235.gumroad.com/l/lector-upgrade")!
 }

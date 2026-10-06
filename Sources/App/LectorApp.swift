@@ -28,6 +28,11 @@ struct LectorApp: App {
                 if let store = delegate.store {
                     TranslateIntoMenu(store: store)
                 }
+                if controller.license.tier != .translate {
+                    Button(controller.license.tier == .free ? "Buy Lector…" : "Upgrade to Translate…") {
+                        delegate.showLicense(limit: nil)
+                    }
+                }
                 Divider()
             }
             if delegate.permissions.hasScreenRecording {
@@ -101,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let permissions = PermissionsChecker()
 
     @ObservationIgnored private var onboardingWindow: NSWindow?
+    @ObservationIgnored private var licenseWindow: NSWindow?
+    @ObservationIgnored private var licenseLimit: LicenseLimitHolder?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = SettingsStore()
@@ -109,13 +116,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let target = Languages.target(for: store.settings.targetLanguage), target != store.settings.targetLanguage {
             store.settings.targetLanguage = target
         }
-        let controller = AppController(settings: store.settings)
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(AppConstants.supportFolder, isDirectory: true)
+        let license = LicenseManager(directory: support)
+        let controller = AppController(settings: store.settings, license: license, usage: UsageMeter())
         store.onChange = { [weak controller] settings in controller?.apply(settings) }
         controller.onChooseSource = { [weak store] app, language in store?.settings.sourceLanguages[app] = language }
         controller.onTranslate = { [weak store] target, source in
             store?.settings.noteTranslation(into: target, from: source)
         }
         controller.onNeedsPermission = { [weak self] in self?.showOnboarding() }
+        controller.onLimit = { [weak self] limit in self?.showLicense(limit: limit) }
+        Task { await license.refresh() }
 
         controller.start()
         self.store = store
@@ -226,5 +238,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         window.makeKeyAndOrderFront(nil)
         onboardingWindow = window
+    }
+
+    /// Opens on reaching a limit, headed by it, and from the menu bar's Buy item.
+    func showLicense(limit: Limit?) {
+        guard let controller else { return }
+        bringForward()
+        if let licenseWindow, let licenseLimit {
+            licenseLimit.limit = limit
+            licenseWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+        let holder = LicenseLimitHolder(limit: limit)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 460, height: 580),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "\(AppConstants.name) License"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: LicenseWindowContent(
+            license: controller.license, usage: controller.usage, holder: holder))
+        window.center()
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.licenseWindow = nil
+                    self?.licenseLimit = nil
+                }
+            }
+        window.makeKeyAndOrderFront(nil)
+        licenseWindow = window
+        licenseLimit = holder
+    }
+}
+
+/// The limit the open license window is headed by: a second one reached while it's up
+/// replaces the first.
+@MainActor
+@Observable
+private final class LicenseLimitHolder {
+    var limit: Limit?
+    init(limit: Limit?) { self.limit = limit }
+}
+
+private struct LicenseWindowContent: View {
+    let license: LicenseManager
+    let usage: UsageMeter
+    let holder: LicenseLimitHolder
+
+    var body: some View {
+        LicenseView(license: license, usage: usage, limit: holder.limit)
+            .frame(width: 460, height: 580)
+            .foregroundStyle(Color.ink)
+            .tint(Color.accent)
     }
 }

@@ -86,7 +86,28 @@ keys, so the game or video underneath keeps working.
 Lector only reads the area again when something in it changes, and it waits
 for a fade or a scroll to finish first, so a still screen costs almost nothing.
 Press ⌘⇧9 again or Esc to stop, or choose Stop Live Translation from the menu
-bar.
+bar. Live translation comes with the Translate plan.
+
+## Plans
+
+| | Free | Text ($9) | Translate ($15) |
+|---|---|---|---|
+| Grabs | 100 a month | Unlimited | Unlimited |
+| Translations | 10 a month | 30 a month | Unlimited |
+| Live translation | No | No | Yes |
+
+Text and Translate are one-time purchases from
+[Gumroad](https://magicelk235.gumroad.com/l/lector). A Text license can be
+upgraded to Translate for $6 with the
+[upgrade](https://magicelk235.gumroad.com/l/lector-upgrade). Paste the key from
+your receipt into Settings › License; for an upgrade, enter the Text key first,
+then the upgrade key.
+
+A grab counts once text is found, and a translation counts when it starts,
+whether from ⌘⇧1 or Tab in the word picker. Counts start over on the first of
+each month. When you reach a limit, the shortcut opens the License window
+instead of the crosshair; a capture already under way always finishes. To move
+a license to another Mac, remove it in Settings › License and enter it there.
 
 ## Languages
 
@@ -127,11 +148,14 @@ that Lector reads and deletes straight away. Live translation watches only the
 area you drew, only until you stop it, and reads it in memory without saving
 anything. Nothing you capture is kept, logged or sent anywhere, and there are no
 analytics. Lector stores only its settings, such as the language you picked for
-an app, and the last few languages you translated between, to offer them first;
-never the text itself.
+an app, the last few languages you translated between, to offer them first, your
+license key, and how many grabs and translations you've made this month; never
+the text itself.
 
-The only thing Lector downloads is language packs, from Hugging Face, and only
-as described under Languages. Your text never leaves the Mac.
+Lector downloads language packs from Hugging Face, only as described under
+Languages. If you enter a license key, Lector sends that key to Gumroad to check
+it, when you enter it and again at each launch. A key Gumroad has confirmed
+keeps working for 30 days without a connection. Your text never leaves the Mac.
 
 ## Limitations
 
