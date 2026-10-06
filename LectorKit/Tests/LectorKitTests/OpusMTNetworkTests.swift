@@ -30,10 +30,13 @@ final class OpusMTNetworkTests: XCTestCase {
         XCTAssertEqual(availability, .ready)
 
         let start = Date()
-        let translation = try await translator.translate(text, from: source, to: target)
-        print("\(source.minimalIdentifier) → \(target.minimalIdentifier) in \(String(format: "%.2f", Date().timeIntervalSince(start)))s:\n\(translation)")
-        let lines = translation.components(separatedBy: "\n")
+        let streamed = Streamed()
+        let lines = try await translator.translate(lines: text.components(separatedBy: "\n"), from: source, to: target) {
+            streamed.append($0, $1)
+        }
+        print("\(source.minimalIdentifier) → \(target.minimalIdentifier) in \(String(format: "%.2f", Date().timeIntervalSince(start)))s:\n\(lines.joined(separator: "\n"))")
         XCTAssertEqual(lines.count, text.components(separatedBy: "\n").count, "one line out per line in")
+        XCTAssertEqual(streamed.byIndex(count: lines.count), lines, "every line handed over once, as returned")
         return lines
     }
 
@@ -51,6 +54,15 @@ final class OpusMTNetworkTests: XCTestCase {
 
     func testEnglishToGreek() async throws {
         let lines = try await translate("Good morning, my friend.", "en", "el")
+        XCTAssertTrue(lines[0].unicodeScalars.contains { (0x0370...0x03FF).contains($0.value) }, "\(lines[0]) is not Greek")
+    }
+
+    /// A paragraph is translated a sentence at a time and put back together: none of
+    /// its sentences may go missing.
+    func testParagraphKeepsEverySentence() async throws {
+        let paragraph = "The museum opens at nine. Tickets are sold at the entrance. Children under twelve enter for free."
+        let lines = try await translate(paragraph + "\nGood morning, my friend.", "en", "el")
+        XCTAssertEqual(lines[0].filter { $0 == "." }.count, 3, lines[0])
         XCTAssertTrue(lines[0].unicodeScalars.contains { (0x0370...0x03FF).contains($0.value) }, "\(lines[0]) is not Greek")
     }
 
@@ -77,4 +89,17 @@ private final class Fractions: Sendable {
 
     func append(_ value: Double) { stored.withLock { $0.append(value) } }
     var values: [Double] { stored.withLock { $0 } }
+}
+
+private final class Streamed: Sendable {
+    private let stored = Mutex<[(Int, String)]>([])
+
+    func append(_ index: Int, _ line: String) { stored.withLock { $0.append((index, line)) } }
+
+    /// The lines in index order, or nil if any index came more than once or not at all.
+    func byIndex(count: Int) -> [String]? {
+        let pairs = stored.withLock { $0 }
+        guard Set(pairs.map(\.0)) == Set(0..<count), pairs.count == count else { return nil }
+        return pairs.sorted { $0.0 < $1.0 }.map(\.1)
+    }
 }

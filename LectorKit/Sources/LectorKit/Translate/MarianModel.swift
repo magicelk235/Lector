@@ -27,13 +27,13 @@ final class MarianModel: Sendable {
     private let encoder: ORTSession
     private let decoder: Decoder
 
-    /// Beam width. Four is what the models were tuned with, and on these models four
-    /// rows cost barely more per step than one.
+    /// The widest beam. Four is what the models were tuned with.
     let beamWidth: Int
 
-    /// Rows per decoder run. Measured on an M4: a step over 4 rows takes 6 ms, over 40
-    /// rows 17 ms and over 80 rows 23 ms, so batching lines is most of the speed on a
-    /// screenful of text; past about 64 rows the gain flattens and memory keeps growing.
+    /// Rows per decoder run. A step's cost grows with its rows — measured on an M4, 5 ms
+    /// over 4 rows, 9 ms over 24 and 18 ms over 60 — so a screenful of text goes much
+    /// faster in one batch than line by line, and past about 64 rows the gain flattens
+    /// while memory keeps growing.
     private let maxBatchRows = 64
 
     init(directory: URL, beamWidth: Int = 4) throws {
@@ -43,11 +43,13 @@ final class MarianModel: Sendable {
         encoder = try ORTSession(modelPath: directory.appending(path: "encoder.onnx").path(percentEncoded: false))
         let merged = directory.appending(path: "decoder_merged.onnx")
         if FileManager.default.fileExists(atPath: merged.path(percentEncoded: false)) {
-            decoder = .merged(try ORTSession(modelPath: merged.path(percentEncoded: false)))
+            decoder = .merged(try ORTSession(modelPath: merged.path(percentEncoded: false), dequantizeAtLoad: true))
         } else {
             decoder = .split(
-                first: try ORTSession(modelPath: directory.appending(path: "decoder.onnx").path(percentEncoded: false)),
-                withPast: try ORTSession(modelPath: directory.appending(path: "decoder_with_past.onnx").path(percentEncoded: false))
+                first: try ORTSession(modelPath: directory.appending(path: "decoder.onnx").path(percentEncoded: false),
+                                      dequantizeAtLoad: true),
+                withPast: try ORTSession(modelPath: directory.appending(path: "decoder_with_past.onnx").path(percentEncoded: false),
+                                         dequantizeAtLoad: true)
             )
         }
         let pastSession: ORTSession = switch decoder {
@@ -80,8 +82,20 @@ final class MarianModel: Sendable {
     /// lost.
     var maxChunkTokens: Int { configuration.maxPositions / 2 }
 
-    /// Translates each text independently, batching them through the model.
-    func translate(_ texts: [String], languageToken: String?, stop: StopFlag? = nil) throws -> [String] {
+    /// Beams per text when translating `count` texts at once: the full width while every
+    /// beam of every text fits one batch, narrower beyond that, down to a single (greedy)
+    /// beam. A beam's rows cost as much as another text's, and the wider beam's gain is a
+    /// different synonym or word order in a third of sentences (measured on Opus-MT
+    /// en-nl), so a page full of text is better served by four times the speed.
+    func beams(for count: Int) -> Int {
+        max(1, min(beamWidth, maxBatchRows / max(count, 1)))
+    }
+
+    /// Translates each text independently, batching them through the model. `finished`
+    /// gets each text's index and translation the moment it is done, on the calling
+    /// thread: short texts are done long before a batch's longest.
+    func translate(_ texts: [String], languageToken: String?, stop: StopFlag? = nil,
+                   finished: (Int, String) -> Void = { _, _ in }) throws -> [String] {
         let sources = texts.map { text in
             let ids = tokenizer.encode(text, languageToken: languageToken)
             guard ids.count > configuration.maxPositions else { return ids }
@@ -89,15 +103,17 @@ final class MarianModel: Sendable {
             // no position for the rest of it.
             return Array(ids.prefix(configuration.maxPositions - 1)) + [configuration.eosTokenID]
         }
+        let beams = beams(for: texts.count)
         // Similar lengths together, so short lines are not padded out to a long one.
         let order = sources.indices.sorted { sources[$0].count < sources[$1].count }
-        let perBatch = max(1, maxBatchRows / beamWidth)
+        let perBatch = max(1, maxBatchRows / beams)
         var translations = [String](repeating: "", count: texts.count)
         for start in stride(from: 0, to: order.count, by: perBatch) {
             let batch = Array(order[start..<min(start + perBatch, order.count)])
-            let outputs = try generate(batch.map { sources[$0] }, stop: stop)
-            for (index, output) in zip(batch, outputs) {
+            try generate(batch.map { sources[$0] }, beams: beams, stop: stop) { position, output in
+                let index = batch[position]
                 translations[index] = tokenizer.decode(output)
+                finished(index, translations[index])
             }
         }
         return translations
@@ -114,15 +130,16 @@ final class MarianModel: Sendable {
         var result: [Int]?
     }
 
-    /// Generated ids for each source (without the decoder start token or `</s>`).
+    /// Generates ids for each source (without the decoder start token or `</s>`), handing
+    /// each to `finished` with its index as soon as its search ends.
     ///
-    /// Row `b * beamWidth + k` of every tensor is beam `k` of source `b`. When a source
+    /// Row `b * beams + k` of every tensor is beam `k` of source `b`. When a source
     /// finishes, its rows are dropped from the batch, so one long line does not keep
     /// running the finished short ones alongside it.
-    func generate(_ sources: [[Int]], stop: StopFlag? = nil) throws -> [[Int]] {
-        guard !sources.isEmpty else { return [] }
+    func generate(_ sources: [[Int]], beams: Int, stop: StopFlag? = nil,
+                  finished: (Int, [Int]) -> Void) throws {
+        guard !sources.isEmpty else { return }
         let config = configuration
-        let beams = beamWidth
         let length = sources.map(\.count).max() ?? 0
         var ids = [Int64](repeating: Int64(config.padTokenID), count: sources.count * length)
         var sourceMask = [Int64](repeating: 0, count: sources.count * length)
@@ -153,6 +170,8 @@ final class MarianModel: Sendable {
             )
         }
         var past: [String: ORTValue] = [:]
+        // Room for every source's softmax at once, reused by every step.
+        var scratch: [Float] = []
         var step = 0
         while !live.isEmpty {
             if stop?.isRaised == true { throw CancellationError() }
@@ -163,14 +182,33 @@ final class MarianModel: Sendable {
             let vocabulary = try logits.shape().last ?? 0
             let rows = try logits.mutableData(as: Float.self)
 
+            // Each source's search reads only its own rows of logits, so they run side by
+            // side: on a full batch this is a fifth of the step otherwise.
+            if scratch.count < live.count * vocabulary {
+                scratch = [Float](repeating: 0, count: live.count * vocabulary)
+            }
+            var advanced = [[Int]?](repeating: nil, count: live.count)
+            searches.withUnsafeMutableBufferPointer { searches in
+                advanced.withUnsafeMutableBufferPointer { advanced in
+                    scratch.withUnsafeMutableBufferPointer { scratch in
+                        let buffers = StepBuffers(searches: searches, advanced: advanced,
+                                                  scratch: scratch.baseAddress!, logits: rows)
+                        DispatchQueue.concurrentPerform(iterations: live.count) { [live, step] block in
+                            buffers.advanced[block] = advance(
+                                &buffers.searches[live[block]], rows: buffers.logits + block * beams * vocabulary,
+                                vocabulary: vocabulary, step: step, scratch: buffers.scratch + block * vocabulary)
+                        }
+                    }
+                }
+            }
             var origins: [Int] = []
             var stillLive: [Int] = []
             for (block, source) in live.enumerated() {
-                let firstRow = block * beams
-                if let beamOrigins = advance(&searches[source], rows: rows + firstRow * vocabulary,
-                                             vocabulary: vocabulary, step: step) {
-                    origins += beamOrigins.map { firstRow + $0 }
+                if let beamOrigins = advanced[block] {
+                    origins += beamOrigins.map { block * beams + $0 }
                     stillLive.append(source)
+                } else {
+                    finished(source, Array((searches[source].result ?? searches[source].tokens[0]).dropFirst()))
                 }
             }
             if stillLive != live {
@@ -193,23 +231,32 @@ final class MarianModel: Sendable {
             live = stillLive
             step += 1
         }
-        return searches.map { Array(($0.result ?? $0.tokens[0]).dropFirst()) }
+    }
+
+    /// One step's buffers, shared with `concurrentPerform`'s threads. Unchecked because
+    /// each thread touches only its own source's `Search`, result slot, scratch and rows.
+    private struct StepBuffers: @unchecked Sendable {
+        let searches: UnsafeMutableBufferPointer<Search>
+        let advanced: UnsafeMutableBufferPointer<[Int]?>
+        let scratch: UnsafeMutablePointer<Float>
+        let logits: UnsafeMutablePointer<Float>
     }
 
     /// One step of one source's beam search: picks the next beams from its rows of
     /// logits. Returns, for each new beam, the beam it continues; or nil once the search
-    /// is over, with `search.result` set.
+    /// is over, with `search.result` set. `scratch` holds `vocabulary` floats.
     private func advance(
-        _ search: inout Search, rows: UnsafeMutablePointer<Float>, vocabulary: Int, step: Int
+        _ search: inout Search, rows: UnsafeMutablePointer<Float>, vocabulary: Int, step: Int,
+        scratch: UnsafeMutablePointer<Float>
     ) -> [Int]? {
         let config = configuration
-        let beams = beamWidth
+        let beams = search.tokens.count
         var candidates: [(beam: Int, token: Int, score: Float)] = []
         candidates.reserveCapacity(beams * beams * 2)
         for beam in 0..<beams where search.scores[beam] > -.infinity {
             let row = rows + beam * vocabulary
             row[config.padTokenID] = -.infinity
-            let logNormalizer = Self.logSumExp(row, count: vocabulary)
+            let logNormalizer = Self.logSumExp(row, count: vocabulary, scratch: scratch)
             for (token, logit) in Self.top(2 * beams, of: row, count: vocabulary) {
                 candidates.append((beam, token, search.scores[beam] + logit - logNormalizer))
             }
@@ -322,12 +369,11 @@ final class MarianModel: Sendable {
         return selected
     }
 
-    /// log(Σ exp(x)), ignoring the -∞ entries.
-    private static func logSumExp(_ row: UnsafeMutablePointer<Float>, count: Int) -> Float {
+    /// log(Σ exp(x)), ignoring the -∞ entries. `scratch` holds `count` floats.
+    private static func logSumExp(_ row: UnsafeMutablePointer<Float>, count: Int,
+                                  scratch: UnsafeMutablePointer<Float>) -> Float {
         var maximum: Float = 0
         vDSP_maxv(row, 1, &maximum, vDSP_Length(count))
-        let scratch = UnsafeMutablePointer<Float>.allocate(capacity: count)
-        defer { scratch.deallocate() }
         var negativeMax = -maximum
         vDSP_vsadd(row, 1, &negativeMax, scratch, 1, vDSP_Length(count))
         var n = Int32(count)

@@ -13,13 +13,13 @@ public enum OpusMTError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unsupportedPair(let source, let target):
-            "No offline translation model covers \(source) to \(target)."
+            "No offline pack for \(source) → \(target)"
         case .modelsNotDownloaded:
-            "The translation model for this language pair has not been downloaded."
+            "Language pack not downloaded"
         case .downloadFailed(let detail):
-            "The translation model could not be downloaded: \(detail)"
-        case .corruptDownload(let file):
-            "The downloaded translation model was damaged (\(file)). Try downloading it again."
+            "Download failed: \(detail)"
+        case .corruptDownload:
+            "Language pack damaged. Try again."
         }
     }
 }
@@ -39,45 +39,85 @@ public enum OpusMTError: Error, LocalizedError, Equatable {
 public final class OpusMTTranslator: Translator {
     private let modelsDirectory: URL
     private let catalog: OpusMTCatalog
-    private let cache = ModelCache(capacity: 4)
+    private let cache: ModelCache<MarianModel>
     /// One translation runs at a time: models share ONNX Runtime's thread pool, so two
     /// at once would each take twice as long and finish no sooner.
     private let inference = DispatchQueue(label: "Lector.OpusMT.inference", qos: .userInitiated)
-    private let downloads = Mutex<[String: Task<Void, any Error>]>([:])
+    private let downloads = Mutex<[String: Download]>([:])
+    private let prefetch = Atomic<Bool>(false)
+
+    /// Whether packs may be fetched ahead of need for pairs another engine already
+    /// translates, for an instant draft. The user's setting, off by default: this
+    /// translator only keeps it so every capture's job sees the same answer.
+    public var prefetchesPacks: Bool {
+        get { prefetch.load(ordering: .relaxed) }
+        set { prefetch.store(newValue, ordering: .relaxed) }
+    }
 
     public convenience init(modelsDirectory: URL) {
         self.init(modelsDirectory: modelsDirectory, catalog: .shared)
     }
 
-    init(modelsDirectory: URL, catalog: OpusMTCatalog) {
+    /// Two loaded models cover a pivot through English, or two languages captured in
+    /// turn. Each costs 650–770 MB while loaded (measured, most of it the decoder's
+    /// weights dequantized at load), so no more stay between uses, and none once the app
+    /// has sat idle for `idleUnload`: a session across a few languages otherwise left the
+    /// app at 1.2 GB for good. Loading one again takes about half a second.
+    init(modelsDirectory: URL, catalog: OpusMTCatalog, residentModels: Int = 2,
+         idleUnload: Duration = .seconds(180)) {
         self.modelsDirectory = modelsDirectory
         self.catalog = catalog
+        // What a model let go leaves among the spare blocks is not worth keeping.
+        cache = ModelCache(capacity: residentModels, idleTimeout: idleUnload) { TensorMemory.releaseSpares() }
     }
 
     // MARK: - Translator
 
     public func availability(from source: Locale.Language, to target: Locale.Language) async -> TranslatorAvailability {
-        guard let route = catalog.route(from: source, to: target) else { return .unsupported }
+        guard let route = catalog.route(from: source, to: target, isInstalled: isInstalled) else { return .unsupported }
         let missing = route.models.filter { !isInstalled($0) }
         return missing.isEmpty ? .ready : .needsDownload(bytes: missing.reduce(0) { $0 + $1.bytes })
+    }
+
+    /// Whether `source` → `target` goes through one of the hundred-language models, the
+    /// only route for languages nothing more specific covers. Their translations are rough
+    /// at best. Measured by Helsinki-NLP on Tatoeba: Persian → English through mul-en
+    /// scores 7.5 BLEU (Persian "please help me" came back as "Give me a little child"),
+    /// while specific models score 40–60. So the user should be told, not handed it as
+    /// an ordinary translation.
+    public func isRough(from source: Locale.Language, to target: Locale.Language) -> Bool {
+        catalog.route(from: source, to: target, isInstalled: isInstalled)?
+            .models.contains { $0.kind == .multilingual } ?? false
     }
 
     /// Translates line by line: the result has exactly as many lines as `text`. Lines
     /// with no letters in them (numbers, times, prices, punctuation) come back as they are.
     public func translate(_ text: String, from source: Locale.Language, to target: Locale.Language) async throws -> String {
+        try await translate(lines: text.components(separatedBy: "\n"), from: source, to: target) { _, _ in }
+            .joined(separator: "\n")
+    }
+
+    /// Translates each of `lines` on its own and returns them in order, handing each to
+    /// `onLine` with its index the moment it is done, on an arbitrary thread: on a page
+    /// of text the short lines land long before the long ones. Lines with no letters in
+    /// them (numbers, times, prices, punctuation) come back as they are, straight away.
+    public func translate(lines: [String], from source: Locale.Language, to target: Locale.Language,
+                          onLine: @escaping @Sendable (Int, String) -> Void) async throws -> [String] {
         let route = try resolve(source, target)
         guard route.models.allSatisfy(isInstalled) else { throw OpusMTError.modelsNotDownloaded }
         var legs: [Leg] = []
         for (index, leg) in route.legs.enumerated() {
-            let model = try await cache.model(leg.model, in: directory(for: leg.model))
-            // Every leg but the last writes English.
-            let joiner = index == route.legs.count - 1 ? Self.sentenceJoiner(for: target) : " "
-            legs.append(Leg(model: model, languageToken: leg.languageToken, joiner: joiner))
+            let directory = directory(for: leg.model)
+            let model = try await cache.model(named: leg.model.name) { try MarianModel(directory: directory) }
+            // Every leg but the last writes English, which the next one reads.
+            let isLast = index == route.legs.count - 1
+            legs.append(Leg(model: model, languageToken: leg.languageToken,
+                            source: index == 0 ? source : Locale.Language(identifier: "en"),
+                            joiner: isLast ? Self.sentenceJoiner(for: target) : " "))
         }
         let stop = StopFlag()
-        let work: @Sendable () throws -> String = { [legs] in
-            try Self.translateLines(text.components(separatedBy: "\n"), through: legs, stop: stop)
-                .joined(separator: "\n")
+        let work: @Sendable () throws -> [String] = { [legs] in
+            try Self.translateLines(lines, through: legs, stop: stop, onLine: onLine)
         }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -93,8 +133,9 @@ public final class OpusMTTranslator: Translator {
     // MARK: - Models on disk
 
     /// Downloads whatever `source` → `target` needs that is not installed yet. `progress`
-    /// runs from 0 to 1 over the bytes still to fetch, on an arbitrary thread. An
-    /// interrupted download continues from where it stopped on the next call.
+    /// runs from 0 to 1 over the bytes still to fetch — both models of a pivot as one
+    /// span — on an arbitrary thread, at most about a hundred times. An interrupted
+    /// download continues from where it stopped on the next call.
     public func download(
         from source: Locale.Language, to target: Locale.Language,
         progress: @escaping @Sendable (Double) -> Void
@@ -112,14 +153,31 @@ public final class OpusMTTranslator: Translator {
         reporter.finish()
     }
 
-    /// The installed models, described by what they translate, e.g. "Hebrew → English".
-    public func installedPairs() -> [String] {
-        catalog.models.filter(isInstalled).map(Self.describe).sorted()
+    /// The installed packs, by what they translate.
+    public func installedPacks() -> [OpusMTPack] {
+        catalog.models.filter(isInstalled)
+            .map { OpusMTPack(model: $0, bytesOnDisk: Self.allocatedSize(of: directory(for: $0))) }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// About how big a pack that writes `target` is, for saying what a download costs:
+    /// the middle of the packs that would serve it.
+    public func typicalPackBytes(into target: Locale.Language) -> Int64? {
+        catalog.typicalBytes(into: target)
+    }
+
+    /// Deletes one installed pack, stopping a download of it if one is under way.
+    public func removePack(_ pack: OpusMTPack) throws {
+        downloads.withLock { $0[pack.id]?.task.cancel() }
+        cache.remove(named: pack.id)
+        let directory = modelsDirectory.appending(path: pack.id, directoryHint: .isDirectory)
+        guard FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) else { return }
+        try FileManager.default.removeItem(at: directory)
     }
 
     /// Deletes every downloaded model and partial download, stopping any in progress.
     public func removeAllModels() throws {
-        downloads.withLock { $0.values.forEach { $0.cancel() } }
+        downloads.withLock { $0.values.forEach { $0.task.cancel() } }
         cache.removeAll()
         let manager = FileManager.default
         guard manager.fileExists(atPath: modelsDirectory.path(percentEncoded: false)) else { return }
@@ -128,10 +186,24 @@ public final class OpusMTTranslator: Translator {
         }
     }
 
+    private static func allocatedSize(of directory: URL) -> Int64 {
+        let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        guard let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: Array(keys))
+        else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in files {
+            guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true else { continue }
+            total += Int64(values.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
     // MARK: - Installing
 
+    /// The route `availability` reported: one already on the Mac where it is about as
+    /// good, so a pair never fetches a second pack beside one that serves it.
     private func resolve(_ source: Locale.Language, _ target: Locale.Language) throws -> OpusMTRoute {
-        guard let route = catalog.route(from: source, to: target) else {
+        guard let route = catalog.route(from: source, to: target, isInstalled: isInstalled) else {
             throw OpusMTError.unsupportedPair(source: source.minimalIdentifier, target: target.minimalIdentifier)
         }
         return route
@@ -145,22 +217,34 @@ public final class OpusMTTranslator: Translator {
         FileManager.default.fileExists(atPath: directory(for: model).appending(path: "manifest.json").path(percentEncoded: false))
     }
 
+    /// A model being fetched, and the progress callbacks of everyone waiting for it.
+    private struct Download {
+        let task: Task<Void, any Error>
+        let listeners: ByteListeners
+    }
+
     /// Installs one model, joining a download of it already under way rather than
-    /// starting a second.
+    /// starting a second; whoever joins hears its progress from where it has got to.
     private func install(_ model: OpusMTModel, onBytes: @escaping @Sendable (Int64) -> Void) async throws {
-        let task = downloads.withLock { running in
+        let download = downloads.withLock { running in
             if let existing = running[model.name] { return existing }
+            let listeners = ByteListeners()
             let task = Task { [modelsDirectory] in
-                try await Self.fetch(model, into: modelsDirectory, onBytes: onBytes)
+                try await Self.fetch(model, into: modelsDirectory) { listeners.send($0) }
             }
-            running[model.name] = task
-            return task
+            let download = Download(task: task, listeners: listeners)
+            running[model.name] = download
+            return download
         }
-        defer { downloads.withLock { if $0[model.name] == task { $0[model.name] = nil } } }
+        let listener = download.listeners.add(onBytes)
+        defer {
+            download.listeners.remove(listener)
+            downloads.withLock { if $0[model.name]?.task == download.task { $0[model.name] = nil } }
+        }
         try await withTaskCancellationHandler {
-            try await task.value
+            try await download.task.value
         } onCancel: {
-            task.cancel()
+            download.task.cancel()
         }
     }
 
@@ -213,21 +297,13 @@ public final class OpusMTTranslator: Translator {
         rmdir(partialRoot.path(percentEncoded: false))
     }
 
-    private static func describe(_ model: OpusMTModel) -> String {
-        func side(_ keys: some Collection<String>, group: String?) -> String {
-            if keys.count == 1, let key = keys.first {
-                return Locale.current.localizedString(forIdentifier: key) ?? key
-            }
-            return group ?? "\(keys.count) languages"
-        }
-        return "\(side(model.sources, group: model.sourceGroup)) → \(side(model.targets.keys, group: model.targetGroup))"
-    }
-
     // MARK: - Translating
 
     private struct Leg: Sendable {
         let model: MarianModel
         let languageToken: String?
+        /// The language the leg reads, which decides where its sentences end.
+        let source: Locale.Language
         /// What goes between sentences translated separately: a space, or nothing in
         /// scripts written without spaces.
         let joiner: String
@@ -238,82 +314,82 @@ public final class OpusMTTranslator: Translator {
         return unspaced.contains(language.languageCode?.identifier ?? "") ? "" : " "
     }
 
-    /// Every line through every leg of the route, all lines of a leg in one batch. A line
-    /// without a letter passes through: there is nothing to translate, and these models
-    /// will happily invent words for "12:30".
-    private static func translateLines(_ lines: [String], through legs: [Leg], stop: StopFlag) throws -> [String] {
+    /// Every line through every leg of the route, all lines of a leg in one batch, each
+    /// line handed to `onLine` once the last leg has all of its pieces. A line without a
+    /// letter passes through: there is nothing to translate, and these models will
+    /// happily invent words for "12:30".
+    private static func translateLines(_ lines: [String], through legs: [Leg], stop: StopFlag,
+                                       onLine: (Int, String) -> Void) throws -> [String] {
+        // Queued behind a translation that has since been closed: nothing to do.
+        if stop.isRaised { throw CancellationError() }
         var texts = lines.map { $0.trimmingCharacters(in: .whitespaces) }
         let translatable = texts.indices.filter { texts[$0].unicodeScalars.contains(where: CharacterSet.letters.contains) }
-        for leg in legs {
+        let translating = Set(translatable)
+        for line in texts.indices where !translating.contains(line) {
+            onLine(line, texts[line])
+        }
+        for (number, leg) in legs.enumerated() {
+            let isLast = number == legs.count - 1
             var pieces: [String] = []
             var owners: [Int] = []
+            // Each line's pieces, which sit together in `pieces`, and how many are still out.
+            var ranges: [Int: Range<Int>] = [:]
+            var remaining: [Int: Int] = [:]
             for line in translatable {
-                for chunk in chunks(of: texts[line], for: leg.model, languageToken: leg.languageToken) {
-                    pieces.append(chunk)
-                    owners.append(line)
-                }
+                let lineChunks = chunks(of: texts[line], in: leg.source, for: leg.model, languageToken: leg.languageToken)
+                ranges[line] = pieces.count..<pieces.count + lineChunks.count
+                remaining[line] = lineChunks.count
+                pieces += lineChunks
+                owners += Array(repeating: line, count: lineChunks.count)
             }
-            let translated = try leg.model.translate(pieces, languageToken: leg.languageToken, stop: stop)
-            var joined: [Int: [String]] = [:]
-            for (line, piece) in zip(owners, translated) where !piece.isEmpty {
-                joined[line, default: []].append(piece)
+            var translated = [String](repeating: "", count: pieces.count)
+            func complete(_ line: Int) {
+                texts[line] = translated[ranges[line] ?? 0..<0].filter { !$0.isEmpty }.joined(separator: leg.joiner)
+                if isLast { onLine(line, texts[line]) }
             }
-            for line in translatable {
-                texts[line] = joined[line, default: []].joined(separator: leg.joiner)
+            for line in translatable where remaining[line] == 0 { complete(line) }
+            _ = try leg.model.translate(pieces, languageToken: leg.languageToken, stop: stop) { piece, text in
+                translated[piece] = text
+                let line = owners[piece]
+                remaining[line, default: 1] -= 1
+                if remaining[line] == 0 { complete(line) }
             }
         }
         return texts
     }
 
-    /// A line too long for the model in one piece, split into sentences and packed back
-    /// together up to the limit. A sentence that is too long on its own is cut between
-    /// words.
-    private static func chunks(of text: String, for model: MarianModel, languageToken: String?) -> [String] {
+    /// A line cut into its sentences, each translated on its own. The models learnt from
+    /// single sentences: given several at once they tend to drop one (a Greek question
+    /// between two other sentences vanished). And decoding takes a step per output token,
+    /// so a paragraph goes as fast as its longest sentence rather than as its whole
+    /// length: thirty sentences took 2.4 s as one line and 0.5 s cut up (M4). A sentence
+    /// too long for the model on its own is cut between words.
+    private static func chunks(of text: String, in language: Locale.Language, for model: MarianModel,
+                               languageToken: String?) -> [String] {
         func fits(_ piece: String) -> Bool {
             model.tokenizer.encode(piece, languageToken: languageToken).count <= model.maxChunkTokens
         }
-        guard !fits(text) else { return [text] }
-
-        var pieces: [String] = []
-        for sentence in units(of: text, .sentence) {
+        var chunks: [String] = []
+        func add(_ piece: String) {
+            let piece = piece.trimmingCharacters(in: .whitespaces)
+            if !piece.isEmpty { chunks.append(piece) }
+        }
+        for sentence in Sentences.split(text, in: language) {
             if fits(sentence) {
-                pieces.append(sentence)
+                add(sentence)
                 continue
             }
             var current = ""
-            for word in units(of: sentence, .word) {
+            for word in Sentences.units(of: sentence, .word, in: language) {
                 if !current.isEmpty, !fits(current + word) {
-                    pieces.append(current)
+                    add(current)
                     current = ""
                 }
                 current += word
             }
-            if !current.isEmpty { pieces.append(current) }
-        }
-
-        var chunks: [String] = []
-        for piece in pieces.map({ $0.trimmingCharacters(in: .whitespaces) }) where !piece.isEmpty {
-            if let last = chunks.last, fits(last + " " + piece) {
-                chunks[chunks.count - 1] = last + " " + piece
-            } else {
-                chunks.append(piece)
-            }
+            add(current)
         }
         return chunks
-    }
-
-    /// `text` cut at the boundaries of `unit`, with whatever lies between two units
-    /// (spaces, punctuation) kept on the first, so the pieces join back into `text`.
-    private static func units(of text: String, _ unit: NLTokenUnit) -> [String] {
-        let tokenizer = NLTokenizer(unit: unit)
-        tokenizer.string = text
-        let ranges = tokenizer.tokens(for: text.startIndex..<text.endIndex)
-        guard !ranges.isEmpty else { return [text] }
-        return ranges.indices.map { index in
-            let start = index == 0 ? text.startIndex : ranges[index].lowerBound
-            let end = index + 1 < ranges.count ? ranges[index + 1].lowerBound : text.endIndex
-            return String(text[start..<end])
-        }
     }
 }
 
@@ -325,43 +401,37 @@ final class StopFlag: Sendable {
     var isRaised: Bool { raised.load(ordering: .relaxed) }
 }
 
-/// Loaded models, least recently used first. Each holds a few hundred megabytes, so only
-/// a handful are kept.
-private final class ModelCache: Sendable {
-    private struct Entry {
-        let name: String
-        let task: Task<MarianModel, any Error>
+/// The progress callbacks of everyone waiting for one download. Whoever joins late is
+/// told at once how far it has got.
+private final class ByteListeners: Sendable {
+    private struct State {
+        var bytes: Int64 = 0
+        var callbacks: [Int: @Sendable (Int64) -> Void] = [:]
+        var nextID = 0
     }
 
-    private let capacity: Int
-    private let entries = Mutex<[Entry]>([])
+    private let state = Mutex(State())
 
-    init(capacity: Int) {
-        self.capacity = capacity
-    }
-
-    func model(_ model: OpusMTModel, in directory: URL) async throws -> MarianModel {
-        let task = entries.withLock { entries in
-            if let index = entries.firstIndex(where: { $0.name == model.name }) {
-                let entry = entries.remove(at: index)
-                entries.append(entry)
-                return entry.task
-            }
-            let task = Task.detached(priority: .userInitiated) { try MarianModel(directory: directory) }
-            entries.append(Entry(name: model.name, task: task))
-            if entries.count > capacity { entries.removeFirst() }
-            return task
+    func send(_ bytes: Int64) {
+        let callbacks = state.withLock { state in
+            state.bytes = bytes
+            return Array(state.callbacks.values)
         }
-        do {
-            return try await task.value
-        } catch {
-            entries.withLock { $0.removeAll { $0.task == task } }
-            throw error
-        }
+        for callback in callbacks { callback(bytes) }
     }
 
-    func removeAll() {
-        entries.withLock { $0.removeAll() }
+    func add(_ callback: @escaping @Sendable (Int64) -> Void) -> Int {
+        let (id, bytes) = state.withLock { state in
+            defer { state.nextID += 1 }
+            state.callbacks[state.nextID] = callback
+            return (state.nextID, state.bytes)
+        }
+        callback(bytes)
+        return id
+    }
+
+    func remove(_ id: Int) {
+        state.withLock { _ = $0.callbacks.removeValue(forKey: id) }
     }
 }
 

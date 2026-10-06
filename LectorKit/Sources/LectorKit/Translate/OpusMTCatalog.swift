@@ -105,29 +105,41 @@ struct OpusMTCatalog: Sendable {
     /// A direct model beats a pivot of the same quality, since every pass through English
     /// loses something; a specific model beats a family model, which beats one of the
     /// hundred-language models. Among equals the smaller download wins.
-    func route(from source: Locale.Language, to target: Locale.Language) -> OpusMTRoute? {
+    ///
+    /// A route already on the Mac (`isInstalled`) is taken over a better one still to
+    /// download when it is no more than a step worse: a family model for a specific one,
+    /// two specific models through English for a family model. Otherwise every pair
+    /// would fetch its own 100–250 MB pack beside ones that already translate it. A
+    /// hundred-language model is worse by more than that, so it never keeps a specific
+    /// model from being fetched.
+    func route(from source: Locale.Language, to target: Locale.Language,
+               isInstalled: (OpusMTModel) -> Bool = { _ in false }) -> OpusMTRoute? {
         guard let sourceKey = key(for: source, among: \.sources),
               let targetKey = key(for: target, among: { Set($0.targets.keys) }),
               sourceKey != targetKey
         else { return nil }
-        return route(from: sourceKey, to: targetKey)
+        return route(from: sourceKey, to: targetKey, isInstalled: isInstalled)
     }
 
-    func route(from source: String, to target: String) -> OpusMTRoute? {
+    func route(from source: String, to target: String,
+               isInstalled: (OpusMTModel) -> Bool = { _ in false }) -> OpusMTRoute? {
         guard source != target else { return nil }
-        var candidates: [OpusMTRoute] = []
-        if let direct = bestLeg(from: source, to: target) {
-            candidates.append(OpusMTRoute(legs: [direct]))
+        var candidates = legs(from: source, to: target).map { OpusMTRoute(legs: [$0]) }
+        if source != pivot, target != pivot {
+            let seconds = legs(from: pivot, to: target)
+            for first in legs(from: source, to: pivot) {
+                candidates += seconds.map { OpusMTRoute(legs: [first, $0]) }
+            }
         }
-        if source != pivot, target != pivot,
-           let first = bestLeg(from: source, to: pivot), let second = bestLeg(from: pivot, to: target) {
-            candidates.append(OpusMTRoute(legs: [first, second]))
+        guard let best = candidates.min(by: { Self.cost($0) < Self.cost($1) }) else { return nil }
+        let installed = candidates.filter {
+            $0.models.allSatisfy(isInstalled) && Self.penalty($0) <= Self.penalty(best) + 1
         }
-        return candidates.min { Self.cost($0) < Self.cost($1) }
+        return installed.min { Self.cost($0) < Self.cost($1) } ?? best
     }
 
-    private static func cost(_ route: OpusMTRoute) -> (Int, Int, Int64) {
-        let penalty = route.legs.reduce(0) { total, leg in
+    private static func penalty(_ route: OpusMTRoute) -> Int {
+        route.legs.reduce(0) { total, leg in
             let legPenalty = switch leg.model.kind {
             case .specific: 1
             case .group: 2
@@ -135,14 +147,28 @@ struct OpusMTCatalog: Sendable {
             }
             return total + legPenalty
         }
-        return (penalty, route.legs.count, route.models.reduce(0) { $0 + $1.bytes })
     }
 
-    private func bestLeg(from source: String, to target: String) -> OpusMTRoute.Leg? {
+    private static func cost(_ route: OpusMTRoute) -> (Int, Int, Int64) {
+        (penalty(route), route.legs.count, route.models.reduce(0) { $0 + $1.bytes })
+    }
+
+    /// Every model that translates `source` into `target`, each as a leg of a route.
+    private func legs(from source: String, to target: String) -> [OpusMTRoute.Leg] {
         models
             .filter { $0.sources.contains(source) && $0.targets[target] != nil }
-            .min { ($0.kind, $0.bytes, $0.name) < ($1.kind, $1.bytes, $1.name) }
+            .sorted { ($0.kind, $0.bytes, $0.name) < ($1.kind, $1.bytes, $1.name) }
             .map { OpusMTRoute.Leg(model: $0, languageToken: $0.targets[target].flatMap { $0.isEmpty ? nil : $0 }) }
+    }
+
+    /// The median size of the packs that write `target`, leaving out the hundred-language
+    /// ones unless they are all there is: what fetching a pack into it typically costs.
+    func typicalBytes(into target: Locale.Language) -> Int64? {
+        guard let key = key(for: target, among: { Set($0.targets.keys) }) else { return nil }
+        let writing = models.filter { $0.targets[key] != nil }
+        let specific = writing.filter { $0.kind != .multilingual }
+        let sizes = (specific.isEmpty ? writing : specific).map(\.bytes).sorted()
+        return sizes.isEmpty ? nil : sizes[sizes.count / 2]
     }
 
     // MARK: - Language keys

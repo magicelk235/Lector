@@ -40,7 +40,7 @@ enum OnnxRuntime {
     }()
 
     /// An `OrtEnv`, created once and never released: ONNX Runtime requires it to outlive
-    /// every session, and sessions live until the process ends.
+    /// every session, and a model can be loaded again at any time.
     final class Environment: @unchecked Sendable {
         let handle: OpaquePointer
 
@@ -56,6 +56,7 @@ enum OnnxRuntime {
             try check(api.CreateEnvWithGlobalThreadPools(ORT_LOGGING_LEVEL_ERROR, "Lector", threading, &environment))
             guard let environment else { throw OnnxRuntimeError(description: "CreateEnv returned nothing") }
             handle = environment
+            try TensorMemory.register(with: environment)
         }
 
         /// The performance cores. Handing part of a small matrix multiply to an
@@ -84,7 +85,9 @@ final class ORTValue {
         OnnxRuntime.api.ReleaseValue(handle)
     }
 
-    /// A tensor with uninitialised contents.
+    /// A tensor with uninitialised contents. These are the decoder's own per-step tensors,
+    /// left to ONNX Runtime's default allocator: through `TensorMemory` a long page took
+    /// 2–3% longer for no memory measurably given back.
     convenience init(shape: [Int], type: ONNXTensorElementDataType) throws {
         let api = OnnxRuntime.api
         var allocator: UnsafeMutablePointer<OrtAllocator>?
@@ -148,14 +151,30 @@ final class ORTSession: @unchecked Sendable {
     /// C copies of every name, made once so a decoding step does not allocate them.
     private let cNames: [String: UnsafeMutablePointer<CChar>]
 
-    init(modelPath: String) throws {
+    /// `dequantizeAtLoad` trades memory for speed in a model run many times per call:
+    /// see below.
+    init(modelPath: String, dequantizeAtLoad: Bool = false) throws {
         let api = OnnxRuntime.api
         let environment = try OnnxRuntime.environment.get()
         var options: OpaquePointer?
         try OnnxRuntime.check(api.CreateSessionOptions(&options))
         defer { api.ReleaseSessionOptions(options) }
         try OnnxRuntime.check(api.DisablePerSessionThreads(options))
+        // Weights and working memory from `TensorMemory`, which gives them back to the
+        // system once the session is released.
+        try OnnxRuntime.check(api.AddSessionConfigEntry(options, "session.use_env_allocators", "1"))
         try OnnxRuntime.check(api.SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL))
+        // The Opus-MT exports keep their weights quantized behind DequantizeLinear nodes,
+        // which constant folding leaves alone while ONNX Runtime's QDQ optimisations are
+        // on (it keeps the pairs for fusion). So every decoder step dequantized the whole
+        // 67k × 512 shared embedding again before the output projection: a quarter to
+        // two fifths of a translation, measured on an M4. With QDQ fusion off it is
+        // dequantized once, at load, for about 300 MB more per model (440 → 780 MB for
+        // de-en, measured). The dynamically quantized matmuls are unaffected. The encoder
+        // runs once per batch and isn't worth the memory.
+        if dequantizeAtLoad {
+            try OnnxRuntime.check(api.AddSessionConfigEntry(options, "session.disable_quant_qdq", "1"))
+        }
 
         var session: OpaquePointer?
         try OnnxRuntime.check(api.CreateSession(environment.handle, modelPath, options, &session))

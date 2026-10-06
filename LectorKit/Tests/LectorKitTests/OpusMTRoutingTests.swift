@@ -127,7 +127,7 @@ final class OpusMTRoutingTests: XCTestCase {
                                                          to: Locale.Language(identifier: "de"))
 
         XCTAssertEqual(availability, .ready)
-        XCTAssertEqual(translator.installedPairs().count, 2)
+        XCTAssertEqual(translator.installedPacks().count, 2)
     }
 
     /// A download that stopped part-way leaves files but no manifest; that is not a model.
@@ -170,9 +170,112 @@ final class OpusMTRoutingTests: XCTestCase {
 
         try translator.removeAllModels()
 
-        XCTAssertEqual(translator.installedPairs(), [])
+        XCTAssertEqual(translator.installedPacks(), [])
         let availability = await translator.availability(from: Locale.Language(identifier: "he"),
                                                          to: Locale.Language(identifier: "en"))
         XCTAssertEqual(availability, .needsDownload(bytes: 110))
+    }
+
+    // MARK: - Installed packs first
+
+    /// Dutch → German has a family model of its own, but two specific models through
+    /// English, already on the Mac, translate it as well: nothing is downloaded.
+    func testInstalledRouteIsUsedRatherThanDownloadingAnother() async throws {
+        let (translator, directory) = try translator()
+        try install("opus-mt-nl-en", in: directory)
+        try install("opus-mt-en-de", in: directory)
+
+        let availability = await translator.availability(from: Locale.Language(identifier: "nl"),
+                                                         to: Locale.Language(identifier: "de"))
+
+        XCTAssertEqual(availability, .ready)
+    }
+
+    /// A hundred-language model is much worse than a specific one, so having it doesn't
+    /// stop the specific model from being fetched.
+    func testInstalledMultilingualModelDoesNotStandInForASpecificOne() async throws {
+        let (translator, directory) = try translator()
+        try install("opus-mt-mul-en", in: directory)
+
+        let availability = await translator.availability(from: Locale.Language(identifier: "he"),
+                                                         to: Locale.Language(identifier: "en"))
+
+        XCTAssertEqual(availability, .needsDownload(bytes: 110))
+    }
+
+    func testRemovingOnePackLeavesTheOthers() async throws {
+        let (translator, directory) = try translator()
+        try install("opus-mt-he-en", in: directory)
+        try install("opus-mt-en-de", in: directory)
+        let pack = try XCTUnwrap(translator.installedPacks().first { $0.id == "opus-mt-he-en" })
+
+        try translator.removePack(pack)
+
+        XCTAssertEqual(translator.installedPacks().map(\.id), ["opus-mt-en-de"])
+        let availability = await translator.availability(from: Locale.Language(identifier: "he"),
+                                                         to: Locale.Language(identifier: "de"))
+        XCTAssertEqual(availability, .needsDownload(bytes: 110))
+    }
+
+    /// A pair served only through a hundred-language model is rough; one with a model of
+    /// its own isn't, even when the hundred-language model is the one on the Mac.
+    func testOnlyManyLanguageRoutesAreRough() throws {
+        let (translator, directory) = try translator()
+        try install("opus-mt-mul-en", in: directory)
+        let language = { Locale.Language(identifier: $0) }
+
+        XCTAssertTrue(translator.isRough(from: language("fa"), to: language("en")))
+        XCTAssertTrue(translator.isRough(from: language("sw"), to: language("fa")), "through mul-en and en-mul")
+        XCTAssertFalse(translator.isRough(from: language("he"), to: language("en")))
+        XCTAssertFalse(translator.isRough(from: language("he"), to: language("de")))
+        XCTAssertFalse(translator.isRough(from: language("ja"), to: language("en")), "no route at all")
+    }
+
+    // MARK: - Describing packs
+
+    private func name(_ code: String) -> String {
+        Locale.current.localizedString(forLanguageCode: code) ?? code
+    }
+
+    /// A family pack says which family, and lists the languages in it rather than
+    /// counting them.
+    func testFamilyPackNamesItsFamilyAndLanguages() throws {
+        let romance = OpusMTModel(
+            name: "opus-mt-ROMANCE-en", repository: "test/romance", revision: String(repeating: "0", count: 40),
+            kind: .group, files: [.init("encoder.onnx", "encoder.onnx", 100, "")],
+            sources: "an ca es fr gl it la oc pt ro wa", targets: "en", sourceGroup: nil, targetGroup: nil
+        )
+        let pack = OpusMTPack(model: romance, bytesOnDisk: 1)
+
+        XCTAssertEqual(pack.title, "Romance languages → \(name("en"))")
+        XCTAssertEqual(pack.sourceLanguages.count, 11)
+        let coverage = try XCTUnwrap(pack.coverage)
+        for code in ["es", "fr", "pt", "it"] {
+            XCTAssertTrue(coverage.contains(name(code)), "\(coverage) leads with the widely read \(name(code))")
+        }
+        XCTAssertTrue(coverage.hasSuffix("and 6 more"), coverage)
+    }
+
+    /// Simplified and Traditional Chinese are one language to the reader.
+    func testScriptsOfOneLanguageAreOneLanguage() {
+        let chinese = OpusMTModel(
+            name: "opus-mt-zh-en", repository: "test/zh", revision: String(repeating: "0", count: 40),
+            kind: .specific, files: [.init("encoder.onnx", "encoder.onnx", 100, "")],
+            sources: "zh-Hans zh-Hant", targets: "en", sourceGroup: nil, targetGroup: nil
+        )
+        let pack = OpusMTPack(model: chinese, bytesOnDisk: 1)
+
+        XCTAssertEqual(pack.title, "\(name("zh")) → \(name("en"))")
+        XCTAssertNil(pack.coverage)
+    }
+
+    func testPackSizeOnDiskIsMeasured() throws {
+        let (translator, directory) = try translator()
+        try install("opus-mt-he-en", in: directory)
+        try Data(count: 64 * 1024).write(to: directory.appending(path: "opus-mt-he-en/encoder.onnx"))
+
+        let pack = try XCTUnwrap(translator.installedPacks().first)
+
+        XCTAssertGreaterThanOrEqual(pack.bytesOnDisk, 64 * 1024)
     }
 }
