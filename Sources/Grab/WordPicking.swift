@@ -29,6 +29,40 @@ struct WordSelection: Equatable {
     }
 }
 
+/// What a copy puts on the pasteboard: the selected words as the paragraphs they're in,
+/// not as the lines the screen happened to wrap them into. Lines of one paragraph are
+/// joined the way `Paragraphs` joins them — a space, nothing between CJK or Thai, a
+/// word broken by a hyphen made whole — and paragraphs keep a line break between them,
+/// so pasting into a document gives sentences rather than "Vous\npouvez l'annuler".
+enum CopiedText {
+    /// `paragraphs` are runs of `text`'s line indices that make up one paragraph each;
+    /// a line in none of them stands on its own.
+    static func text(ofWords words: ClosedRange<Int>, in text: RecognizedText, paragraphs: [Range<Int>]) -> String {
+        var paragraphOfLine = Array(text.lines.indices)
+        for (number, lines) in paragraphs.enumerated() {
+            for line in lines where paragraphOfLine.indices.contains(line) {
+                paragraphOfLine[line] = text.lines.count + number
+            }
+        }
+
+        var result: [String] = []
+        var previousParagraph: Int?
+        let selected = words.lowerBound..<(words.upperBound + 1)
+        for (index, line) in text.lines.enumerated() {
+            let chosen = line.wordRange.clamped(to: selected)
+            guard !chosen.isEmpty else { continue }
+            let piece = text.text(ofWords: chosen)
+            if previousParagraph == paragraphOfLine[index], let earlier = result.popLast() {
+                result.append(Paragraphs.join(earlier, piece))
+            } else {
+                result.append(piece)
+            }
+            previousParagraph = paragraphOfLine[index]
+        }
+        return result.joined(separator: "\n")
+    }
+}
+
 enum WordHitTest {
     /// The word a pointer at `point` means, in the recognised image's pixel space.
     ///
