@@ -80,9 +80,6 @@ struct LicenseView: View {
                         buyRow("Upgrade to Translate", detail: "Unlimited translations, live translation",
                                price: "$6", url: AppConstants.upgradeURL)
                     }
-                    Text("One-time purchases. Your key arrives by email and on the Gumroad receipt.")
-                        .font(.caption)
-                        .foregroundStyle(Color.inkMuted)
                 }
             }
         }
