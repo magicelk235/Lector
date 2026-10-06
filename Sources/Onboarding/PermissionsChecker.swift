@@ -46,7 +46,7 @@ final class PermissionsChecker {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in
-            Task { @MainActor in NSApplication.shared.terminate(nil) }
+            Task { @MainActor in AppDelegate.quit() }
         }
     }
 }

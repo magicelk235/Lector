@@ -26,6 +26,8 @@ targets:
       - path: Vendor/licenses
         type: folder
         buildPhase: resources
+      - path: AppIcon.icon
+        buildPhase: resources
     dependencies:
       - package: LectorKit
     info:
@@ -52,6 +54,8 @@ targets:
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         SWIFT_STRICT_CONCURRENCY: complete
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The lectern's red (Resources/Assets.xcassets), the same pair as Palette.accent: toolbar, controls, focus rings.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
   LectorTests:
     type: bundle.unit-test
     platform: macOS

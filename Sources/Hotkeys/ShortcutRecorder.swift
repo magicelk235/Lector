@@ -17,21 +17,27 @@ struct ShortcutRecorder: View {
             Button {
                 recording ? stop() : start()
             } label: {
-                Text(recording ? "Type shortcut…" : shortcut.label)
-                    .monospacedDigit()
-                    .frame(minWidth: 90)
+                Keycap(recording ? "Press keys" : shortcut.label, width: 84, listening: recording)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .accessibilityLabel(recording ? "Press the new shortcut" : shortcut.label)
 
-            if shortcut != defaultShortcut, !recording {
-                Button {
-                    shortcut = defaultShortcut
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("Reset to \(defaultShortcut.label)")
+            // Always holds its place, so a changed shortcut doesn't shift its cap out of
+            // line with the others.
+            let changed = shortcut != defaultShortcut && !recording
+            Button {
+                shortcut = defaultShortcut
+            } label: {
+                Image(systemName: "arrow.counterclockwise").foregroundStyle(Color.accent)
+                    .frame(width: 16)
             }
+            .buttonStyle(.borderless)
+            .help("Reset to \(defaultShortcut.label)")
+            .accessibilityLabel("Reset to \(defaultShortcut.label)")
+            .opacity(changed ? 1 : 0)
+            .disabled(!changed)
+            .accessibilityHidden(!changed)
         }
         .onDisappear { stop() }
     }
@@ -105,5 +111,42 @@ struct ShortcutRecorder: View {
         kVK_F11: "F11", kVK_F12: "F12", kVK_F13: "F13", kVK_F14: "F14",
         kVK_F15: "F15", kVK_F16: "F16", kVK_F17: "F17", kVK_F18: "F18",
         kVK_F19: "F19", kVK_F20: "F20",
+    ]
+}
+
+extension Shortcut {
+    /// The combination as a menu shows it, right-aligned in the item like every other
+    /// shortcut, rather than written into the title; nil for a key no menu can show.
+    var menuShortcut: KeyboardShortcut? {
+        let equivalent: KeyEquivalent
+        if let special = Self.menuKeys[Int(keyCode)] {
+            equivalent = special
+        } else if let function = Self.functionKeys.firstIndex(of: Int(keyCode)),
+                  let scalar = UnicodeScalar(NSF1FunctionKey + function) {
+            equivalent = KeyEquivalent(Character(scalar))
+        } else if key.count == 1, let character = key.lowercased().first {
+            equivalent = KeyEquivalent(character)
+        } else {
+            return nil
+        }
+        var flags: SwiftUI.EventModifiers = []
+        if modifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
+        if modifiers & UInt32(optionKey) != 0 { flags.insert(.option) }
+        if modifiers & UInt32(shiftKey) != 0 { flags.insert(.shift) }
+        if modifiers & UInt32(cmdKey) != 0 { flags.insert(.command) }
+        return KeyboardShortcut(equivalent, modifiers: flags)
+    }
+
+    private static let menuKeys: [Int: KeyEquivalent] = [
+        kVK_Space: .space, kVK_Return: .return, kVK_Tab: .tab, kVK_Delete: .delete,
+        kVK_ForwardDelete: .deleteForward, kVK_LeftArrow: .leftArrow, kVK_RightArrow: .rightArrow,
+        kVK_UpArrow: .upArrow, kVK_DownArrow: .downArrow, kVK_Home: .home, kVK_End: .end,
+        kVK_PageUp: .pageUp, kVK_PageDown: .pageDown, kVK_Escape: .escape,
+    ]
+
+    /// F1 to F20 in order: their key codes aren't.
+    private static let functionKeys = [
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+        kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20,
     ]
 }
