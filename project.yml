@@ -6,14 +6,19 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.0"
+    # Sparkle compares CFBundleVersion, so it has to move with every release. Keeping
+    # it equal to the marketing version leaves one number to bump.
+    CURRENT_PROJECT_VERSION: "$(MARKETING_VERSION)"
     SWIFT_VERSION: "6.0"
     DEVELOPMENT_TEAM: "V8K8L3ZSD5"
     CODE_SIGN_STYLE: Automatic
 packages:
   LectorKit:
     path: LectorKit
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.5"
 targets:
   Lector:
     type: application
@@ -30,17 +35,24 @@ targets:
         buildPhase: resources
     dependencies:
       - package: LectorKit
+      - package: Sparkle
     info:
       path: Info.plist
       properties:
         CFBundleName: Lector
         CFBundleDisplayName: Lector
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "15.0"
         LSApplicationCategoryType: public.app-category.productivity
         LSUIElement: true
         NSHumanReadableCopyright: "Copyright © 2026 Yehonatan Cohen. PolyForm Shield License 1.0.0."
+        # Sparkle: appcast.xml is attached to every GitHub release, so
+        # /releases/latest/download always resolves to the current feed.
+        SUFeedURL: "https://github.com/magicelk235/Lector/releases/latest/download/appcast.xml"
+        SUPublicEDKey: "apcUCBF2JH7SFuH8ohkVJGa+zu9Yzu21IAYbvwI1vbM="
+        # Install in the background once the user allows checks.
+        SUAutomaticallyUpdate: true
     entitlements:
       path: Lector.entitlements
       properties:

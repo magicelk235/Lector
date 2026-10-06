@@ -15,6 +15,13 @@ Lector reads and translates the text on your Mac.
   and macOS needs the app relaunched after you grant it. Until then Lector is
   locked: its menu offers only to allow it. Lector doesn't need Accessibility.
 
+## Install
+
+Download [Lector.dmg](https://github.com/magicelk235/Lector/releases/latest/download/Lector.dmg),
+open it and drag Lector to Applications. Lector updates itself: from the second
+launch it asks whether to check for updates, and then installs them in the
+background. Settings › General can turn that off or check now.
+
 ## Grab text with ⌘⇧2
 
 You get the ⌘⇧4 crosshair. Drag a box around the text, or press Space and click
@@ -155,7 +162,9 @@ the text itself.
 Lector downloads language packs from Hugging Face, only as described under
 Languages. If you enter a license key, Lector sends that key to Gumroad to check
 it, when you enter it and again at each launch. A key Gumroad has confirmed
-keeps working for 30 days without a connection. Your text never leaves the Mac.
+keeps working for 30 days without a connection. If you allow update checks,
+Lector asks GitHub once a day whether there's a new version. Your text never
+leaves the Mac.
 
 ## Limitations
 

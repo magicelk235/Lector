@@ -38,8 +38,9 @@ struct LectorApp: App {
             if delegate.permissions.hasScreenRecording {
                 SettingsButton(onOpen: delegate.bringForward)
                 Button("Welcome Guide") { delegate.showOnboarding() }
-                Divider()
             }
+            Button("Check for Updates…") { Updater.shared.checkForUpdates() }
+            Divider()
             Button("Quit \(AppConstants.name)") { AppDelegate.quit() }
                 .keyboardShortcut("q")
         }
@@ -130,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await license.refresh() }
 
         controller.start()
+        Updater.shared.isBusy = { [weak controller] in controller?.isBusy ?? false }
+        Updater.shared.start()
         self.store = store
         self.controller = controller
 
@@ -166,8 +169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    /// Set only by `quit()`: the menu bar's Quit, and a relaunch.
-    private static var quitRequested = false
+    /// Set by `quit()`, the menu bar's Quit and a relaunch, and by an update installing.
+    static var quitRequested = false
 
     /// Actually exits. Every other quit — ⌘Q, the Dock's Quit — only closes the windows.
     static func quit() {

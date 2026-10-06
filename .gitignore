@@ -20,3 +20,6 @@ build/
 
 # macOS
 .DS_Store
+
+# Release output (scripts/release.sh)
+/dist/

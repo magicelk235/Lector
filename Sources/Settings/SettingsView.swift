@@ -30,6 +30,9 @@ private struct GeneralSettings: View {
     let controller: AppController
 
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var checksForUpdates = Updater.shared.automaticallyChecksForUpdates
+
+    private static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
 
     var body: some View {
         Form {
@@ -70,6 +73,16 @@ private struct GeneralSettings: View {
                             launchAtLogin = SMAppService.mainApp.status == .enabled
                         }
                     }
+            }
+
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $checksForUpdates)
+                    .onChange(of: checksForUpdates) { _, enabled in
+                        Updater.shared.automaticallyChecksForUpdates = enabled
+                    }
+                LabeledContent("Version \(Self.version)") {
+                    Button("Check Now") { Updater.shared.checkForUpdates() }
+                }
             }
         }
         .formStyle(.grouped)

@@ -190,6 +190,9 @@ final class AppController {
         }
     }
 
+    /// Something on screen or under way that an app update would cut short.
+    var isBusy: Bool { isCapturing || live != nil || picker != nil || overlay != nil }
+
     func cancel() {
         work?.cancel()
         work = nil
