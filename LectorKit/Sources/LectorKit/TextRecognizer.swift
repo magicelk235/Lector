@@ -9,6 +9,21 @@ struct VisionReading {
     /// Every area Vision's script-agnostic detector sees text in, read or not. Text in
     /// a script Vision cannot read shows up here and nowhere in `lines`.
     var textRegions: [CGRect]
+
+    /// The same reading of a crop enlarged by `scale` with its top-left corner at
+    /// `origin`, in the pixels of the image it was cut from.
+    func placed(at origin: CGPoint, scale: CGFloat) -> VisionReading {
+        func place(_ rect: CGRect) -> CGRect {
+            CGRect(x: origin.x + rect.minX / scale, y: origin.y + rect.minY / scale,
+                   width: rect.width / scale, height: rect.height / scale)
+        }
+        return VisionReading(
+            lines: lines.map { line in
+                OCRLine(words: line.words.map { OCRWord(text: $0.text, rect: place($0.rect), separator: $0.separator) },
+                        rect: place(line.rect), confidence: line.confidence)
+            },
+            textRegions: textRegions.map(place))
+    }
 }
 
 /// Apple's Vision OCR: the first engine, and the only one for Latin and CJK text.
@@ -43,6 +58,30 @@ struct TextRecognizer {
         }
         let regions = (detect.results ?? []).map { Self.pixelRect($0.boundingBox, in: size) }
         return VisionReading(lines: lines, textRegions: regions)
+    }
+
+    /// Reads `region` of `image` on its own, enlarged by `scale`, with boxes in
+    /// `image` pixels.
+    ///
+    /// Vision misses short isolated words that are small next to the whole image — four
+    /// of five CJK menu labels in a 1104×361 capture — and reads them once shown little
+    /// more than their surroundings. Cut out, small text needs enlarging: four kanji
+    /// labels 15px tall it read none of, twice the size all four.
+    func read(_ image: CGImage, in region: CGRect, scale: CGFloat = 1) throws -> VisionReading {
+        let region = region.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height)).integral
+        guard !region.isEmpty, var crop = image.cropping(to: region) else { return VisionReading(lines: [], textRegions: []) }
+        if scale > 1 {
+            let width = Int(region.width * scale), height = Int(region.height * scale)
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+            else { return VisionReading(lines: [], textRegions: []) }
+            context.interpolationQuality = .high
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+            guard let enlarged = context.makeImage() else { return VisionReading(lines: [], textRegions: []) }
+            crop = enlarged
+        }
+        return try read(crop).placed(at: region.origin, scale: scale)
     }
 
     /// Vision's normalised, bottom-left-origin box as pixels from the top left.

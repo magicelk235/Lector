@@ -34,37 +34,38 @@ struct TesseractRecognizer: Sendable {
         return try TesseractEngine(model: model, dataPath: dataPath)
     }
 
-    /// Reads `image` — the source scaled by `scale` — with `engine`, and returns
-    /// lines with words in logical order and boxes in source pixels.
-    func read(_ image: GrayImage, scale: CGFloat, with engine: TesseractEngine) throws -> [OCRLine] {
-        let page = try engine.recognize(image)
+    /// `page`'s lines with words in logical order and boxes in source pixels, for a
+    /// page read from the source scaled by `scale` with its top-left corner at `origin`.
+    ///
+    /// - Parameter rightToLeft: whether the text is in a right-to-left script. A
+    ///   mixed line's direction is its text's: "Apple Watch הוא מכשיר" in Hebrew text is
+    ///   a Hebrew sentence that starts with an English name.
+    static func lines(from page: TesseractPage, scale: CGFloat, origin: CGPoint, rightToLeft: Bool) -> [OCRLine] {
         let lines = page.lines.map { words in
             words.compactMap { word -> (text: String, rect: CGRect, confidence: Float)? in
                 let text = String(String.UnicodeScalarView(word.text.unicodeScalars.filter { !$0.isBidiControl }))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { return nil }
-                let rect = CGRect(x: word.rect.minX / scale, y: word.rect.minY / scale,
+                let rect = CGRect(x: origin.x + word.rect.minX / scale, y: origin.y + word.rect.minY / scale,
                                   width: word.rect.width / scale, height: word.rect.height / scale)
                 return (text, rect, word.confidence)
             }
         }.filter { !$0.isEmpty }
 
-        // A mixed line's direction is its page's: "Apple Watch הוא מכשיר" on a Hebrew
-        // page is a Hebrew sentence that starts with an English name.
-        let pageScripts = Script.histogram(of: lines.flatMap { $0.map(\.text) }.joined())
-        let pageRightToLeft = Self.rightToLeftLetters(pageScripts) > Self.leftToRightLetters(pageScripts)
-
         return lines.map { words in
             let scripts = Script.histogram(of: words.map(\.text).joined())
-            let rightToLeft = Self.rightToLeftLetters(scripts) > 0
-                && (pageRightToLeft || Self.rightToLeftLetters(scripts) > Self.leftToRightLetters(scripts))
+            let lineIsRightToLeft = rightToLeftLetters(scripts) > 0
+                && (rightToLeft || rightToLeftLetters(scripts) > leftToRightLetters(scripts))
             let lineRect = words.dropFirst().reduce(words[0].rect) { $0.union($1.rect) }
-            var ordered = ReadingOrder.logicalOrder(
-                words.map { OCRWord(text: $0.text, rect: $0.rect, separator: " ") },
-                rightToLeft: rightToLeft)
+            let read = words.map { OCRWord(text: $0.text, rect: $0.rect, separator: " ") }
+            // Left-to-right text is already in reading order, which positions can only
+            // spoil: read as a block, the Bengali "আছেন?" got a box twice its width
+            // and would have changed places with the next word.
+            var ordered = rightToLeftLetters(scripts) == 0 ? read
+                : ReadingOrder.logicalOrder(read, rightToLeft: lineIsRightToLeft)
             for index in ordered.indices {
                 ordered[index].separator = index == 0 ? ""
-                    : Self.separator(between: ordered[index - 1], and: ordered[index], lineHeight: lineRect.height)
+                    : separator(between: ordered[index - 1], and: ordered[index], lineHeight: lineRect.height)
             }
             let confidence = words.map(\.confidence).reduce(0, +) / Float(words.count)
             return OCRLine(words: ordered, rect: lineRect, confidence: confidence)

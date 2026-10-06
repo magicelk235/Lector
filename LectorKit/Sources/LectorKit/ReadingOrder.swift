@@ -1,3 +1,4 @@
+import Accelerate
 import CoreGraphics
 
 /// A word as an engine reported it, before assembly into `RecognizedText`.
@@ -158,6 +159,10 @@ enum ColumnGaps {
     /// Background this many line-heights wide is a column boundary. Word spacing
     /// measures about 0.3 of the line height; two web-page table cells, 2.3.
     static let minimumGap: CGFloat = 1.2
+    /// The same in CJK text, set without spaces or (Korean) with narrow ones, where a
+    /// gap of most of a line height is never inside a phrase: it is the full-width
+    /// space that sets menu items apart ("設定　保存　削除"), which Vision drops.
+    static let minimumCJKGap: CGFloat = 0.8
     /// How far from the background a pixel must be to count as ink.
     static let inkContrast = 48
 
@@ -165,25 +170,17 @@ enum ColumnGaps {
         guard line.words.count > 1 else { return [line] }
         let band = line.rect.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height)).integral
         let minX = Int(band.minX), maxX = Int(band.maxX), minY = Int(band.minY), maxY = Int(band.maxY)
-        guard maxX - minX > 2, maxY - minY > 2 else { return [line] }
-
-        // The band is mostly background, so its commonest value is the background.
-        var histogram = [Int](repeating: 0, count: 256)
-        for y in minY..<maxY {
-            let row = image.pixels + y * image.width
-            for x in minX..<maxX { histogram[Int(row[x])] += 1 }
-        }
-        let background = histogram.indices.max { histogram[$0] < histogram[$1] } ?? 0
-
+        guard maxX - minX > 2, maxY - minY > 2,
+              let (background, darkest, lightest) = columnExtremes(of: image, minX: minX, maxX: maxX, minY: minY, maxY: maxY)
+        else { return [line] }
         func hasInk(_ x: Int) -> Bool {
-            for y in minY..<maxY where abs(Int(image.pixels[y * image.width + x]) - background) > inkContrast {
-                return true
-            }
-            return false
+            Int(lightest[x - minX]) - background > inkContrast || background - Int(darkest[x - minX]) > inkContrast
         }
 
-        // Interior runs of blank columns at least `minimumGap` line-heights wide.
-        let needed = Int((CGFloat(maxY - minY) * minimumGap).rounded(.up))
+        // Interior runs of blank columns at least `minimumGap` line-heights wide, or
+        // `minimumCJKGap` in CJK.
+        let minimum = RecognitionBackend.isCJK(line.text) ? minimumCJKGap : minimumGap
+        let needed = Int((CGFloat(maxY - minY) * minimum).rounded(.up))
         var gaps: [ClosedRange<CGFloat>] = []
         var seenInk = false
         var runStart: Int?
@@ -223,6 +220,39 @@ enum ColumnGaps {
             let rect = words.dropFirst().reduce(first.rect) { $0.union($1.rect) }
             return OCRLine(words: words, rect: rect, confidence: line.confidence)
         }
+    }
+
+    /// The band's background — its commonest value, since a line's band is mostly
+    /// background — and the darkest and lightest pixel of each of its columns.
+    ///
+    /// With vImage's histogram and a band-tall minimum and maximum filter: going over
+    /// the pixels in Swift took 60ms for a full Retina screen in a debug build.
+    private static func columnExtremes(of image: GrayImage, minX: Int, maxX: Int, minY: Int, maxY: Int)
+        -> (background: Int, darkest: [UInt8], lightest: [UInt8])? {
+        let width = maxX - minX, height = maxY - minY
+        var band = vImage_Buffer(data: image.pixels + minY * image.width + minX, height: vImagePixelCount(height),
+                                 width: vImagePixelCount(width), rowBytes: image.width)
+        var histogram = [vImagePixelCount](repeating: 0, count: 256)
+        guard histogram.withUnsafeMutableBufferPointer({
+            vImageHistogramCalculation_Planar8(&band, $0.baseAddress!, vImage_Flags(kvImageNoFlags))
+        }) == kvImageNoError else { return nil }
+        let background = histogram.indices.max { histogram[$0] < histogram[$1] } ?? 0
+
+        // The filters' one output row is the band's middle one, with a window taking in
+        // every row of the band.
+        let window = vImagePixelCount(height | 1)
+        var darkest = [UInt8](repeating: 0, count: width), lightest = [UInt8](repeating: 0, count: width)
+        let filtered = darkest.withUnsafeMutableBytes { dark in
+            lightest.withUnsafeMutableBytes { light in
+                var low = vImage_Buffer(data: dark.baseAddress, height: 1, width: vImagePixelCount(width), rowBytes: width)
+                var high = vImage_Buffer(data: light.baseAddress, height: 1, width: vImagePixelCount(width), rowBytes: width)
+                return vImageMin_Planar8(&band, &low, nil, 0, vImagePixelCount(height / 2), window, 1, vImage_Flags(kvImageNoFlags))
+                    == kvImageNoError
+                    && vImageMax_Planar8(&band, &high, nil, 0, vImagePixelCount(height / 2), window, 1, vImage_Flags(kvImageNoFlags))
+                    == kvImageNoError
+            }
+        }
+        return filtered ? (background, darkest, lightest) : nil
     }
 }
 

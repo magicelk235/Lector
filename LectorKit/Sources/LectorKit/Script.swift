@@ -94,6 +94,14 @@ enum Script: String, CaseIterable, Sendable {
         }
     }
 
+    /// Chinese, Japanese and Korean, which no bundled model reads.
+    var isCJK: Bool {
+        switch self {
+        case .han, .kana, .hangul: true
+        default: false
+        }
+    }
+
     /// The bundled tessdata_fast script model that reads this script, if one ships.
     /// Latin and the CJK scripts have none: Vision reads them better on every OS the
     /// app supports, and a Latin script model alone would be 89MB.
@@ -102,6 +110,16 @@ enum Script: String, CaseIterable, Sendable {
         case .latin, .han, .kana, .hangul: nil
         case .canadianAboriginal: "Canadian_Aboriginal"
         default: rawValue.prefix(1).uppercased() + rawValue.dropFirst()
+        }
+    }
+
+    /// Whether this script's model reads Latin text as look-alike letters of its own
+    /// ("Тгаск уоиг раскаде" for "Track your package"), at times with full confidence.
+    /// Every other bundled model reads Latin text as Latin.
+    var readsLatinAsLookalikes: Bool {
+        switch self {
+        case .greek, .cyrillic: true
+        default: false
         }
     }
 

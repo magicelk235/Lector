@@ -27,15 +27,24 @@ final class TesseractEngine {
         TessBaseAPIDelete(handle)
     }
 
-    /// Recognises `image` and returns its lines in Tesseract's reading order, with
-    /// boxes in `image` pixels. Symbols are only collected when asked for: the script
-    /// contest scores them, a full read does not need them.
-    func recognize(_ image: GrayImage, resolution: Int32 = 144, symbols: Bool = false) throws -> TesseractPage {
-        TessBaseAPISetPageSegMode(handle, PSM_AUTO)
+    /// How an image to recognise is laid out.
+    enum Layout {
+        /// One block of lines. Not a page: the images are crops of single lines or
+        /// small groups of them, and page layout analysis discards short isolated
+        /// words ("نافذة") and pointed Hebrew as not being text.
+        case block
+        /// A single line, taken as it is without looking for lines in it.
+        case line
+    }
+
+    /// Recognises `image` and returns its lines in reading order, with boxes in
+    /// `image` pixels, and every symbol with its confidence.
+    func recognize(_ image: GrayImage, as layout: Layout = .block) throws -> TesseractPage {
+        TessBaseAPISetPageSegMode(handle, layout == .block ? PSM_SINGLE_BLOCK : PSM_RAW_LINE)
         TessBaseAPISetImage(handle, image.pixels, Int32(image.width), Int32(image.height), 1, Int32(image.width))
         // Screen text at 2x is about 144 dpi; left unset, Tesseract assumes 70 and
         // mis-sizes its noise filters.
-        TessBaseAPISetSourceResolution(handle, resolution)
+        TessBaseAPISetSourceResolution(handle, 144)
         defer { TessBaseAPIClear(handle) }
         guard TessBaseAPIRecognize(handle, nil) == 0 else { throw TesseractError.recognitionFailed }
 
@@ -61,30 +70,37 @@ final class TesseractEngine {
         } while TessResultIteratorNext(iterator, RIL_WORD) != 0
         page.lines.removeAll { $0.isEmpty }
 
-        if symbols, let iterator = TessBaseAPIGetIterator(handle) {
+        if let iterator = TessBaseAPIGetIterator(handle) {
             defer { TessResultIteratorDelete(iterator) }
+            let position = TessResultIteratorGetPageIterator(iterator)
             repeat {
                 guard let raw = TessResultIteratorGetUTF8Text(iterator, RIL_SYMBOL) else { continue }
-                page.symbols.append((String(cString: raw), TessResultIteratorConfidence(iterator, RIL_SYMBOL) / 100))
+                let text = String(cString: raw)
                 TessDeleteText(raw)
+                var left: Int32 = 0, top: Int32 = 0, right: Int32 = 0, bottom: Int32 = 0
+                guard TessPageIteratorBoundingBox(position, RIL_SYMBOL, &left, &top, &right, &bottom) != 0 else { continue }
+                page.symbols.append(TesseractWord(
+                    text: text,
+                    rect: CGRect(x: Int(left), y: Int(top), width: Int(right - left), height: Int(bottom - top)),
+                    confidence: TessResultIteratorConfidence(iterator, RIL_SYMBOL) / 100))
             } while TessResultIteratorNext(iterator, RIL_SYMBOL) != 0
         }
         return page
     }
 }
 
-struct TesseractWord {
+struct TesseractWord: Sendable {
     var text: String
     var rect: CGRect
     /// 0…1. Unlike Vision's, a real distribution: correct readings score 0.8–0.97.
     var confidence: Float
 }
 
-struct TesseractPage {
+struct TesseractPage: Sendable {
     /// Lines in Tesseract's reading order, each a list of words.
     var lines: [[TesseractWord]] = []
-    /// Every recognised character with its confidence (0…1), when requested.
-    var symbols: [(text: String, confidence: Float)] = []
+    /// Every recognised character, as a word of one.
+    var symbols: [TesseractWord] = []
 }
 
 enum TesseractError: Error, Equatable {
