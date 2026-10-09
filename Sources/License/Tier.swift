@@ -56,7 +56,7 @@ enum Limit: Equatable, Sendable {
         case .translations(let cap, let free):
             "You've used this month's \(cap) \(free ? "free " : "")translations."
         case .live:
-            "Live translation comes with Lector Translate."
+            "Live translation (beta) comes with Lector Translate."
         }
     }
 }

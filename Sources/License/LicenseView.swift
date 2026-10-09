@@ -29,7 +29,7 @@ struct LicenseView: View {
                 usageRow("Grabs this month", used: usage.used(.grab), cap: license.tier.grabsPerMonth)
                 usageRow("Translations this month", used: usage.used(.translation),
                          cap: license.tier.translationsPerMonth)
-                LabeledContent("Live translation") {
+                LabeledContent("Live translation (Beta)") {
                     Text(license.tier.allowsLive ? "Included" : "With Translate")
                         .foregroundStyle(Color.inkMuted)
                 }
@@ -74,10 +74,10 @@ struct LicenseView: View {
                     if license.tier == .free {
                         buyRow("Text", detail: "Unlimited grabs, 30 translations a month", price: "$9",
                                url: AppConstants.storeURL)
-                        buyRow("Translate", detail: "Unlimited grabs and translations, live translation",
+                        buyRow("Translate", detail: "Unlimited grabs and translations, live translation (beta)",
                                price: "$15", url: AppConstants.storeURL)
                     } else {
-                        buyRow("Upgrade to Translate", detail: "Unlimited translations, live translation",
+                        buyRow("Upgrade to Translate", detail: "Unlimited translations, live translation (beta)",
                                price: "$6", url: AppConstants.upgradeURL)
                     }
                 }

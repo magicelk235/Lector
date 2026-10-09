@@ -22,7 +22,7 @@ struct LectorApp: App {
                     Button("Stop Live Translation") { controller.stopLive() }
                         .keyboardShortcut(controller.settings.liveShortcut.menuShortcut)
                 } else {
-                    Button("Live Translate") { delegate.beginFromMenu(.live) }
+                    Button("Live Translate (Beta)") { delegate.beginFromMenu(.live) }
                         .keyboardShortcut(controller.settings.liveShortcut.menuShortcut)
                 }
                 if let store = delegate.store {

@@ -49,7 +49,7 @@ private struct GeneralSettings: View {
                                      onRecordingChange: recordingChanged)
                 }
                 if controller.translateConflict { conflictNote }
-                LabeledContent("Live translate") {
+                LabeledContent("Live translate (Beta)") {
                     ShortcutRecorder(shortcut: $store.settings.liveShortcut,
                                      defaultShortcut: .liveDefault,
                                      onRecordingChange: recordingChanged)

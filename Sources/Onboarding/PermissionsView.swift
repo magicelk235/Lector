@@ -28,7 +28,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 12) {
                 shortcutRow(store.settings.grabShortcut, title: "Grab text")
                 shortcutRow(store.settings.translateShortcut, title: "Translate")
-                shortcutRow(store.settings.liveShortcut, title: "Live translate")
+                shortcutRow(store.settings.liveShortcut, title: "Live translate (Beta)")
             }
 
             HStack(spacing: 10) {

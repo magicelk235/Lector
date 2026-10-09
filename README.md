@@ -82,7 +82,7 @@ and those of its region, such as Hebrew and Arabic in Israel. Chinese is offered
 as Simplified and Traditional. You can change all three shortcuts in
 Settings › General.
 
-## Live translation with ⌘⇧9
+## Live translation with ⌘⇧9 (beta)
 
 Draw around game dialogue, video subtitles or any part of the screen whose
 text changes. Lector keeps that area translated in place: when the text changes,
@@ -95,13 +95,19 @@ for a fade or a scroll to finish first, so a still screen costs almost nothing.
 Press ⌘⇧9 again or Esc to stop, or choose Stop Live Translation from the menu
 bar. Live translation comes with the Translate plan.
 
+Live translation is in beta. A subtitle that's on screen for less than about a
+second can be gone before its translation shows up, and over moving video the
+last line's translation can stay up for a moment after the next line appears.
+Stylised game fonts are sometimes misread, which comes out as an odd
+translation.
+
 ## Plans
 
 | | Free | Text ($9) | Translate ($15) |
 |---|---|---|---|
 | Grabs | 100 a month | Unlimited | Unlimited |
 | Translations | 10 a month | 30 a month | Unlimited |
-| Live translation | No | No | Yes |
+| Live translation (beta) | No | No | Yes |
 
 Text and Translate are one-time purchases from
 [Gumroad](https://magicelk235.gumroad.com/l/lector). A Text license can be
