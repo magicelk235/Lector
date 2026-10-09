@@ -6,7 +6,7 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "1.0.0"
+    MARKETING_VERSION: "1.0.1"
     # Sparkle compares CFBundleVersion, so it has to move with every release. Keeping
     # it equal to the marketing version leaves one number to bump.
     CURRENT_PROJECT_VERSION: "$(MARKETING_VERSION)"
