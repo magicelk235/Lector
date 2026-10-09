@@ -78,17 +78,7 @@ WANT="$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' "$ROOT/project.yml" | he
 [ "$VERSION" = "$WANT" ] || { echo "FAILED: built $VERSION, but project.yml says $WANT"; exit 1; }
 
 echo "==> Building Lector.dmg ($VERSION)"
-rm -f "$OUT"
-create-dmg \
-  --volname "Lector" \
-  --window-pos 200 120 \
-  --window-size 600 380 \
-  --icon-size 128 \
-  --icon "Lector.app" 160 170 \
-  --app-drop-link 440 170 \
-  --hide-extension "Lector.app" \
-  --no-internet-enable \
-  "$OUT" "$APP" >/dev/null
+"$ROOT/Scripts/make-dmg.sh" "$APP" "$OUT"
 # A signed DMG lets Gatekeeper check the disk image itself, not only the app inside.
 codesign --sign "$SIGN_ID" --timestamp "$OUT"
 
