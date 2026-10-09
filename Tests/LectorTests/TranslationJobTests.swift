@@ -101,4 +101,16 @@ final class TranslationJobTests: XCTestCase {
         job.start(paragraphs: ["12:30"])
         XCTAssertEqual(job.roughSources, [])
     }
+
+    /// Live translation hands in what's already painted over lines it reads again. It
+    /// stays up through the new reading's start, rather than coming off until the plan
+    /// is made and going back up: that's a blink over text that never changed.
+    func testKnownTranslationsAreThereFromTheStart() throws {
+        let job = try makeJob()
+        defer { job.cancel() }
+
+        job.start(paragraphs: ["Pues... tu tienes muchos amigos", "Y tu no tienes suficientes"],
+                  known: [0: "Well... you have lots of friends"])
+        XCTAssertEqual(job.translations, ["Well... you have lots of friends", nil])
+    }
 }

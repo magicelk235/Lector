@@ -117,6 +117,11 @@ final class TranslationJob {
         generation += 1
         translations = Array(repeating: nil, count: paragraphs.count)
         isFinal = Array(repeating: false, count: paragraphs.count)
+        // Already on screen: up from the start, not once the plan is made.
+        for (index, text) in known where translations.indices.contains(index) {
+            translations[index] = text
+            isFinal[index] = true
+        }
         revision += 1
         status = .working
         notice = nil

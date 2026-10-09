@@ -32,9 +32,14 @@ final class LiveTranslation {
     private let watcher = RegionWatcher()
     private var job: TranslationJob?
     private var renderer: TranslationRenderer?
-    /// The paragraphs of the reading on screen, and what's painted over each.
+    /// The lines of the reading on screen, its paragraphs, and what's painted over each.
+    private var lines: [(text: String, rect: CGRect)] = []
     private var blocks: [Paragraphs.Block] = []
+    /// What each paragraph's translation is, and what's painted over it: its translation,
+    /// or until that lands what was over it in the reading before (`standIns`).
     private var shown: [LiveDiff.Shown] = []
+    private var painting: [LiveDiff.Shown] = []
+    private var standIns: [String?] = []
     /// The reading's frame size, and where each paragraph and its translation lie on it.
     private var frameSize = CGSize.zero
     private var painted: [CGRect] = []
@@ -109,7 +114,7 @@ final class LiveTranslation {
 
     private func read(_ image: CGImage, signature: FrameSignature?) {
         Task {
-            let text = (try? await reader.read(image)) ?? .empty
+            let text = LiveReading.cleaned((try? await reader.read(image)) ?? .empty)
             guard !stopped else { return }
             let changed = show(text, in: image)
             if let signature { watcher.finishedReading(signature, textChanged: changed) }
@@ -119,6 +124,11 @@ final class LiveTranslation {
     /// Puts up the translation of a new reading of the region, and returns whether its
     /// text was new — rather than the same lines moved, or misread by a letter.
     private func show(_ text: RecognizedText, in image: CGImage) -> Bool {
+        let lines = text.lines.map { ($0.text, $0.rect) }
+        // The same lines again: what's up stays as it is. Grouped into paragraphs anew,
+        // they could come out grouped differently and be translated all over again.
+        if renderer != nil, LiveDiff.sameReading(lines, as: self.lines) { return false }
+        self.lines = lines
         let blocks = Paragraphs.blocks(text)
         let reused = LiveDiff.reuse(blocks.map { ($0.text, $0.rect) }, from: shown)
         let changed = blocks.count != self.blocks.count || reused.contains { $0 == nil }
@@ -128,6 +138,9 @@ final class LiveTranslation {
         guard changed || moved || renderer == nil else { return false }
 
         self.blocks = blocks
+        // A line read worse than before keeps what was painted over it until its new
+        // translation lands, rather than the original flashing back meanwhile.
+        standIns = LiveDiff.standIns(blocks.map { ($0.text, $0.rect) }, from: painting)
         job?.cancel()
         let job = TranslationJob(target: target, offline: offline, appleSessions: appleSessions, memory: memory)
         var known: [Int: String] = [:]
@@ -163,7 +176,8 @@ final class LiveTranslation {
             downloading = false
             Toast.shared.hide()
         }
-        let message: String? = if case .failed(let reason) = job.status { reason } else { job.notice }
+        // A region with nothing in it — between two subtitles — isn't worth a word.
+        let message: String? = if case .failed(let reason) = job.status { blocks.isEmpty ? nil : reason } else { job.notice }
         if let message, message != announced {
             announced = message
             Toast.shared.show(message, systemImage: "exclamationmark.triangle", beside: rect, kind: .notice)
@@ -190,10 +204,11 @@ final class LiveTranslation {
 
     private func repaint() {
         guard let job, let renderer, !stopped else { return }
-        let translations = job.translations
-        // Nothing painted over a paragraph — kept as it is, or not translated yet — is
+        let translations = zip(job.translations, standIns).map { $0 ?? $1 }
+        // Nothing translated over a paragraph — kept as it is, or not translated yet — is
         // remembered as such: it's reused, not translated again, if it comes back.
-        shown = zip(blocks, translations).map { LiveDiff.Shown(text: $0.text, rect: $0.rect, translation: $1 ?? "") }
+        shown = zip(blocks, job.translations).map { LiveDiff.Shown(text: $0.text, rect: $0.rect, translation: $1 ?? "") }
+        painting = zip(blocks, translations).map { LiveDiff.Shown(text: $0.text, rect: $0.rect, translation: $1 ?? "") }
         let paintable = LiveDiff.paintable(translations, over: painted, unread: unread, in: frameSize)
         let rendering = paintable.contains { $0 != nil } ? renderer.render(paintable) : nil
         if let rendering {

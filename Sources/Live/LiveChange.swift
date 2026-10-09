@@ -80,12 +80,16 @@ struct FrameArea: Equatable, Sendable {
     var isEmpty: Bool { cells.isEmpty }
 
     /// Whether any of it lies between `top` and `bottom` of a frame `height` pixels tall.
+    /// A row counts when at least half of it, or of the span if that's the thinner, is
+    /// inside: a translation set a little taller than its line grazes the rows around
+    /// it, and what moves there — the video above a subtitle — isn't its text changing.
     func reaches(from top: CGFloat, to bottom: CGFloat, height: CGFloat) -> Bool {
         guard columns > 0, rows > 0 else { return false }
         let row = height / CGFloat(rows)
+        let enough = min(row, bottom - top) / 2
         return cells.contains { cell in
             let upper = CGFloat(cell / columns) * row
-            return upper < bottom && top < upper + row
+            return min(bottom, upper + row) - max(top, upper) >= enough
         }
     }
 }
@@ -99,8 +103,9 @@ struct FrameArea: Equatable, Sendable {
 /// when last read ends the change without a reading (a blinking caret, a hover going away).
 ///
 /// Moving pictures that come back with the same text are read less and less often, up
-/// to `slowest` apart, until the text changes again: playing video then costs a reading
-/// every couple of seconds, not every second.
+/// to `slowest` apart, until the text changes again. Subtitles last two or three seconds;
+/// a translation can't change before the line under it is read, so a new one shows
+/// within that much, and the old one stays over it no longer.
 ///
 /// Where a change came to a picture that had been holding still — a dialogue box, a
 /// page — it is new text until read (`unread`), and the translation over it comes off
@@ -127,7 +132,7 @@ struct ChangeDetector {
     /// The change under way came to a picture that had been holding still.
     private var changeFromStill = false
 
-    init(settle: TimeInterval = 0.25, patience: TimeInterval = 1, slowest: TimeInterval = 2) {
+    init(settle: TimeInterval = 0.25, patience: TimeInterval = 0.5, slowest: TimeInterval = 0.75) {
         self.settle = settle
         firstPatience = patience
         self.slowest = slowest
@@ -206,8 +211,10 @@ struct ChangeDetector {
 ///
 /// The same text, wherever it moved to: a scroll isn't new text. And text in the same
 /// place that differs only by the odd character: the reader's noise when it reads a
-/// subtitle again over moving video. Short lines are only ever the same when identical
-/// — "Yes" and "Yet" are different lines.
+/// subtitle again over moving video — a wrong kana, a stray mark after a name, a run of
+/// dots read as a different run of dots. Punctuation and case are left out of the
+/// comparison altogether. Lines too short to tell a misread letter from a different
+/// word are only ever the same when identical: "Yes" and "Yet" are different lines.
 enum LiveDiff {
     /// `translations` as they can still be painted over the paragraphs in `areas` on a
     /// frame `size` big. One whose band across the frame has changed since it was read —
@@ -228,44 +235,88 @@ enum LiveDiff {
         let translation: String
     }
 
-    /// Below this length a difference of one character is a different line.
+    /// From this many letters a line may differ by one and still be the same line.
+    static let shortestMisread = 5
+    /// From this many letters a line may differ by `1 - alike` of them.
     static let shortest = 20
-    /// How alike a longer line must be, in characters, to count as the same.
     static let alike = 0.92
 
     /// For each of `paragraphs`, the translation it can show again, or nil to translate.
     static func reuse(_ paragraphs: [(text: String, rect: CGRect)], from shown: [Shown]) -> [String?] {
-        let known = Dictionary(shown.map { (normalized($0.text), $0.translation) }, uniquingKeysWith: { first, _ in first })
+        let known = Dictionary(shown.map { (key($0.text), $0.translation) }, uniquingKeysWith: { first, _ in first })
         return paragraphs.map { paragraph in
-            let text = normalized(paragraph.text)
+            let text = key(paragraph.text)
             if let same = known[text] { return same }
-            guard text.count >= shortest else { return nil }
             return shown.first { old in
-                old.rect.intersects(paragraph.rect) && similarity(text, normalized(old.text)) >= alike
+                old.rect.intersects(paragraph.rect) && misread(text, as: key(old.text))
             }?.translation
         }
     }
 
-    static func normalized(_ text: String) -> String {
-        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    /// How alike a line must be to what was painted in its place for that to stay up
+    /// while the line is translated again: the same line misread worse than `reuse`
+    /// lets pass, not the next one.
+    static let standingIn = 0.6
+
+    /// For each of `paragraphs`, what can stay painted over it until its own translation
+    /// lands: the translation of the line in its place, if that line was nearly it.
+    static func standIns(_ paragraphs: [(text: String, rect: CGRect)], from shown: [Shown]) -> [String?] {
+        paragraphs.map { paragraph in
+            let text = Array(key(paragraph.text))
+            return shown.first { old in
+                let before = Array(key(old.text))
+                let longer = max(text.count, before.count)
+                guard !old.translation.isEmpty, longer > 0, old.rect.intersects(paragraph.rect),
+                      Double(min(text.count, before.count)) >= Double(longer) * standingIn
+                else { return false }
+                return 1 - Double(distance(text, before)) / Double(longer) >= standingIn
+            }?.translation
+        }
     }
 
-    /// 1 for identical, 0 for nothing in common: one minus the edit distance over the
-    /// longer length.
-    static func similarity(_ a: String, _ b: String) -> Double {
+    /// Whether the lines of a new reading are those of the one before, each in its
+    /// place give or take a misread letter. Then nothing on screen is new, however the
+    /// lines would be grouped into paragraphs this time, and what's painted stays.
+    static func sameReading(_ lines: [(text: String, rect: CGRect)], as before: [(text: String, rect: CGRect)]) -> Bool {
+        guard lines.count == before.count else { return false }
+        var left = before.map { (key: key($0.text), rect: $0.rect) }
+        for line in lines {
+            let text = key(line.text)
+            guard let match = left.firstIndex(where: { $0.rect.intersects(line.rect) && misread(text, as: $0.key) })
+            else { return false }
+            left.remove(at: match)
+        }
+        return true
+    }
+
+    /// What's compared: the letters and digits, in lowercase. A line with none is
+    /// compared as it is.
+    static func key(_ text: String) -> String {
+        let letters = String(text.lowercased().filter { $0.isLetter || $0.isNumber })
+        return letters.isEmpty ? text.split(whereSeparator: \.isWhitespace).joined(separator: " ") : letters
+    }
+
+    /// Whether `a` is `b` with no more misread letters than a line that long can have.
+    static func misread(_ a: String, as b: String) -> Bool {
         let a = Array(a), b = Array(b)
-        guard !a.isEmpty || !b.isEmpty else { return 1 }
-        // Too different in length to be within the threshold: don't compute it.
-        guard Double(min(a.count, b.count)) / Double(max(a.count, b.count)) >= alike else { return 0 }
+        let longer = max(a.count, b.count)
+        let allowed = longer >= shortest ? Int(Double(longer) * (1 - alike)) : longer >= shortestMisread ? 1 : 0
+        guard allowed > 0, abs(a.count - b.count) <= allowed else { return a == b }
+        return distance(a, b) <= allowed
+    }
+
+    /// The fewest letters to change, add or drop to make `a` into `b`.
+    static func distance(_ a: [Character], _ b: [Character]) -> Int {
+        guard !a.isEmpty, !b.isEmpty else { return max(a.count, b.count) }
         var previous = Array(0...b.count)
         var current = [Int](repeating: 0, count: b.count + 1)
         for i in 1...a.count {
             current[0] = i
-            for j in stride(from: 1, through: b.count, by: 1) {
+            for j in 1...b.count {
                 current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1))
             }
             swap(&previous, &current)
         }
-        return 1 - Double(previous[b.count]) / Double(max(a.count, b.count))
+        return previous[b.count]
     }
 }
