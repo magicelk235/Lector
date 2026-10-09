@@ -16,14 +16,30 @@ enum ColorSampler {
     private static let fallback = Colors(backgroundRGB: RGB(red: 255, green: 255, blue: 255),
                                          inkRGB: RGB(red: 0, green: 0, blue: 0))
 
-    /// `rect` is in the image's pixels, top-left origin.
-    static func colors(in bitmap: Bitmap, rect: CGRect) -> Colors {
+    /// `rect` is in the image's pixels, top-left origin; `lineHeight`, one of its lines',
+    /// says how far around it the page is looked at.
+    static func colors(in bitmap: Bitmap, rect: CGRect, lineHeight: CGFloat) -> Colors {
         let samples = samples(of: bitmap, in: rect)
         // Text is sparse, so the commonest colour is the background; the commonest
         // colour clearly different from it is the text. Anti-aliased edges spread
         // across many in-between colours and never win either count.
-        guard let background = dominant(samples)?.color else { return fallback }
-        let ink = dominant(samples.filter { $0.distance(to: background) > 90 })?.color ?? contrasting(background)
+        guard var background = dominant(samples)?.color else { return fallback }
+        // On a picture — a video, a game behind a see-through box — neither holds. In a
+        // tight box, dense type can outnumber each of the picture's many colours: a
+        // colour that is all but missing just outside the box, where the page around the
+        // text is, is the text's own, and the page is what is there instead.
+        let rim = max(2, lineHeight * 0.15)
+        let around = Self.samples(of: bitmap, in: rect.insetBy(dx: -rim, dy: -rim), excluding: rect)
+        if let outside = dominant(around)?.color, outside.distance(to: background) > 90,
+           around.count(where: { $0.bin == background.bin }) * 10 < around.count {
+            background = outside
+        }
+        // And the picture's own colours far from the page can outnumber the text's, whose
+        // edges spread over many: the ink is the commonest of them that can be read on
+        // the page, where any can.
+        let candidates = samples.filter { $0.distance(to: background) > 90 }
+        let legible = candidates.filter { $0.contrast(with: background) >= 3 }
+        let ink = dominant(legible.isEmpty ? candidates : legible)?.color ?? contrasting(background)
         return Colors(backgroundRGB: background, inkRGB: ink)
     }
 
@@ -35,16 +51,17 @@ enum ColorSampler {
         return top.share >= 0.7
     }
 
-    /// Every so many pixels of `rect`: plenty to find the dominant colours. Picked, not
-    /// averaged: averaged, a thin light stroke on a dark page shrinks to grey, and grey
-    /// wins the ink count.
-    private static func samples(of bitmap: Bitmap, in rect: CGRect) -> [RGB] {
+    /// Every so many pixels of `rect` but those in `hole`: plenty to find the dominant
+    /// colours. Picked, not averaged: averaged, a thin light stroke on a dark page
+    /// shrinks to grey, and grey wins the ink count.
+    private static func samples(of bitmap: Bitmap, in rect: CGRect, excluding hole: CGRect = .null) -> [RGB] {
         let area = rect.integral.intersection(bitmap.frame)
         guard !area.isNull, area.width >= 1, area.height >= 1 else { return [] }
         let step = max(1, Int(max(area.width, area.height) / 160))
         var samples: [RGB] = []
         for y in stride(from: Int(area.minY), to: Int(area.maxY), by: step) {
-            for x in stride(from: Int(area.minX), to: Int(area.maxX), by: step) {
+            for x in stride(from: Int(area.minX), to: Int(area.maxX), by: step)
+            where !hole.contains(CGPoint(x: CGFloat(x) + 0.5, y: CGFloat(y) + 0.5)) {
                 samples.append(bitmap[x, y])
             }
         }
@@ -89,6 +106,24 @@ struct RGB: Hashable {
     /// Summed over the channels, 0 to 765.
     func distance(to other: RGB) -> Int {
         abs(red - other.red) + abs(green - other.green) + abs(blue - other.blue)
+    }
+
+    /// WCAG's contrast ratio between the two, from 1 for the same luminance to 21 for
+    /// black and white: 3 is the least large type reads at.
+    func contrast(with other: RGB) -> Double {
+        let a = luminance, b = other.luminance
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// Relative luminance, 0 for black to 1 for white.
+    private var luminance: Double {
+        0.2126 * Self.linear[red] + 0.7152 * Self.linear[green] + 0.0722 * Self.linear[blue]
+    }
+
+    /// Each 8-bit sRGB level as linear light.
+    private static let linear = (0...255).map { level in
+        let value = Double(level) / 255
+        return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
     }
 
     var color: NSColor {

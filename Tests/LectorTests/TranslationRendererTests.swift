@@ -159,7 +159,8 @@ final class TranslationRendererTests: XCTestCase {
         let image = try XCTUnwrap(context.makeImage())
 
         let all = CGRect(x: 0, y: 0, width: width, height: height)
-        let ink = try XCTUnwrap(ColorSampler.colors(in: XCTUnwrap(Bitmap(image, rect: all)), rect: all)
+        let ink = try XCTUnwrap(ColorSampler.colors(in: XCTUnwrap(Bitmap(image, rect: all)), rect: all,
+                                                    lineHeight: all.height)
             .ink.usingColorSpace(.sRGB))
         XCTAssertGreaterThan(ink.redComponent, 0.85, "ink \(ink)")
     }
@@ -173,13 +174,73 @@ final class TranslationRendererTests: XCTestCase {
             let (capture, original) = try typeset([Line(text: "The quick brown fox jumps over the lazy dog", x: 20,
                                                         baseline: 50)], width: 900, height: 80, page: page, ink: ink)
             let line = original.lines[0].rect
-            let sampled = try XCTUnwrap(ColorSampler.colors(in: XCTUnwrap(Bitmap(capture, rect: line)), rect: line)
+            let sampled = try XCTUnwrap(ColorSampler.colors(in: XCTUnwrap(Bitmap(capture, rect: line)), rect: line,
+                                                            lineHeight: line.height)
                 .background.usingColorSpace(.sRGB))
             let expected = try XCTUnwrap(page.usingColorSpace(.sRGB))
             XCTAssertEqual(sampled.redComponent, expected.redComponent, accuracy: 0.5 / 255, "\(sampled)")
             XCTAssertEqual(sampled.greenComponent, expected.greenComponent, accuracy: 0.5 / 255, "\(sampled)")
             XCTAssertEqual(sampled.blueComponent, expected.blueComponent, accuracy: 0.5 / 255, "\(sampled)")
         }
+    }
+
+    /// White type on a dialogue box that lets the game show through: the scene's dark
+    /// browns inside the line outnumber the type's white, whose edges spread over many
+    /// levels, but can't be read on the box. The ink is the white, on the box's black.
+    func testInkOnASeeThroughBoxIsTheTypeNotTheSceneBehind() throws {
+        let (image, box) = try whiteLine("たたかうといいでしょう。", size: 40, width: 700, height: 80) { context in
+            context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 700, height: 80))
+            context.setFillColor(CGColor(srgbRed: 63 / 255, green: 28 / 255, blue: 10 / 255, alpha: 1))
+            context.fill(CGRect(x: 150, y: 0, width: 180, height: 80))
+        }
+        let colors = try sampled(box, in: image)
+        XCTAssertEqual(colors.backgroundRGB, RGB(red: 0, green: 0, blue: 0))
+        XCTAssertGreaterThan(colors.inkRGB.red, 230, "ink \(colors.inkRGB)")
+    }
+
+    /// Dense white type straight on a picture, no box: in its tight box the white
+    /// outnumbers each of the picture's many colours. Its patch is still the picture's,
+    /// from around the line, and it is written in white — not black on a white patch.
+    func testDenseTypeOnAPictureIsNotTakenForItsPage() throws {
+        let picture = [RGB(red: 52, green: 43, blue: 28), RGB(red: 36, green: 27, blue: 13),
+                       RGB(red: 20, green: 20, blue: 20), RGB(red: 70, green: 20, blue: 20),
+                       RGB(red: 40, green: 60, blue: 60), RGB(red: 90, green: 70, blue: 40),
+                       RGB(red: 10, green: 30, blue: 50), RGB(red: 60, green: 10, blue: 40)]
+        let (image, box) = try whiteLine("警戒区域に指定", size: 48, weight: .bold, width: 700, height: 120) { context in
+            for (stripe, x) in stride(from: 0, to: 700, by: 3).enumerated() {
+                context.setFillColor(picture[stripe % picture.count].color.cgColor)
+                context.fill(CGRect(x: x, y: 0, width: 3, height: 120))
+            }
+        }
+        let colors = try sampled(box, in: image)
+        XCTAssertTrue(picture.contains(colors.backgroundRGB), "page \(colors.backgroundRGB)")
+        XCTAssertGreaterThan(colors.inkRGB.red, 230, "ink \(colors.inkRGB)")
+    }
+
+    /// White `text` drawn on what `paint` puts down, and its glyphs' box (top-left origin).
+    private func whiteLine(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, width: Int, height: Int,
+                           on paint: (CGContext) -> Void) throws -> (CGImage, CGRect) {
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                              bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        paint(context)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: NSColor.white]))
+        let baseline = CGFloat(height) * 0.65
+        context.textPosition = CGPoint(x: 40, y: CGFloat(height) - baseline)
+        CTLineDraw(line, context)
+        let glyphs = CTLineGetImageBounds(line, nil)
+        return (try XCTUnwrap(context.makeImage()),
+                CGRect(x: 40 + glyphs.minX, y: baseline - glyphs.maxY, width: glyphs.width, height: glyphs.height))
+    }
+
+    /// The colours a translation of the one line in `box` is painted in.
+    private func sampled(_ box: CGRect, in image: CGImage) throws -> ColorSampler.Colors {
+        let text = RecognizedText(words: [RecognizedWord(text: "x", rect: box, lineIndex: 0)],
+                                  lines: [RecognizedLine(text: "x", rect: box, wordRange: 0..<1)])
+        let block = Paragraphs.Block(text: "x", rect: box, lineHeight: box.height, lines: 0..<1)
+        return try XCTUnwrap(Page(capture: image, original: text, blocks: [block]).paragraphs.first).colors
     }
 
     /// Menu items OCR boxes at different heights — "View" has no descender, "Help"

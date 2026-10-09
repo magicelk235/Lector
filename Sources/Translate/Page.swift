@@ -85,7 +85,7 @@ struct Page {
         let whole = CGRect(origin: .zero, size: size)
         let bitmap = Bitmap(capture, rect: whole)
         let colors = blocks.map { block in
-            bitmap.map { ColorSampler.colors(in: $0, rect: block.rect) }
+            bitmap.map { ColorSampler.colors(in: $0, rect: block.rect, lineHeight: block.lineHeight) }
                 ?? ColorSampler.Colors(backgroundRGB: RGB(red: 255, green: 255, blue: 255),
                                        inkRGB: RGB(red: 0, green: 0, blue: 0))
         }
