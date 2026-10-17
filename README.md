@@ -209,15 +209,19 @@ anything. Nothing you capture is kept, logged or sent anywhere, and there are no
 analytics. Lector stores only its settings, such as the language you picked for
 an app, the last few languages you translated between, to offer them first, the
 glossary terms you added, where live translation watched in each app, your
-license key, and how many grabs and translations you've made this month;
-never the text you captured.
+license key, the day Lector first ran, and how many grabs and translations
+you've made this month; never the text you captured.
 
 Lector downloads language packs from Hugging Face, only as described under
 Languages. If you enter a license key, Lector sends that key to Gumroad to check
 it, when you enter it and again at each launch. A key Gumroad has confirmed
-keeps working for 30 days without a connection. If you allow update checks,
-Lector asks GitHub once a day whether there's a new version. Your text never
-leaves the Mac.
+keeps working for 30 days without a connection. The Buy and Upgrade buttons
+open Gumroad with a few tags in the link: where in Lector you pressed the
+button, your current plan, this month's grab and translation counts, and
+roughly how long Lector has been installed (under 2 days, up to a week, up to
+a month, or longer). Gumroad shows them to the seller alongside the sale. If
+you allow update checks, Lector asks GitHub once a day whether there's a new
+version. Your text never leaves the Mac.
 
 ## Limitations
 

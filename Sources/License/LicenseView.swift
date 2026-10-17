@@ -6,7 +6,12 @@ import SwiftUI
 struct LicenseView: View {
     let license: LicenseManager
     let usage: UsageMeter
-    var limit: Limit?
+    /// Where this view is showing, which the Buy links report, and the limit it's headed by.
+    var origin: BuyLink.Origin = .settings
+
+    private var limit: Limit? {
+        if case .window(let limit) = origin { limit } else { nil }
+    }
 
     @State private var key = ""
 
@@ -73,9 +78,9 @@ struct LicenseView: View {
                 Section("Buy") {
                     if license.tier == .free {
                         buyRow("Text", detail: "Unlimited grabs, 30 translations a month", price: "$9",
-                               url: AppConstants.storeURL)
+                               url: AppConstants.storeURL, version: "Text")
                         buyRow("Translate", detail: "Unlimited grabs and translations, live translation (beta)",
-                               price: "$15", url: AppConstants.storeURL)
+                               price: "$15", url: AppConstants.storeURL, version: "Translate")
                     } else {
                         buyRow("Upgrade to Translate", detail: "Unlimited translations, live translation (beta)",
                                price: "$6", url: AppConstants.upgradeURL)
@@ -106,9 +111,15 @@ struct LicenseView: View {
         }
     }
 
-    private func buyRow(_ title: String, detail: String, price: String, url: URL) -> some View {
+    /// `version` names the Gumroad version to preselect at checkout.
+    private func buyRow(_ title: String, detail: String, price: String, url: URL,
+                        version: String? = nil) -> some View {
         LabeledContent {
-            Button("Buy \(price)") { NSWorkspace.shared.open(url) }
+            Button("Buy \(price)") {
+                NSWorkspace.shared.open(BuyLink.url(
+                    url, version: version, from: origin, tier: license.tier, grabs: usage.used(.grab),
+                    translations: usage.used(.translation), daysSinceFirstLaunch: usage.daysSinceFirstLaunch))
+            }
         } label: {
             Text(title)
             Text(detail)

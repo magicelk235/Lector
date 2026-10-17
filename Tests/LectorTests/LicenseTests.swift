@@ -56,6 +56,67 @@ final class UsageMeterTests: XCTestCase {
         XCTAssertEqual(meter.used(.translation), 1)
         XCTAssertEqual(meter.used(.grab), 0)
     }
+
+    func testInstallAgeCountsFromTheFirstLaunchOnly() {
+        var now = date(2026, 10, 1)
+        _ = UsageMeter(defaults: defaults, now: { now })
+        now = date(2026, 10, 9)
+        let later = UsageMeter(defaults: defaults, now: { now })
+        XCTAssertEqual(later.daysSinceFirstLaunch, 8)
+        now = date(2026, 11, 1)
+        XCTAssertEqual(later.daysSinceFirstLaunch, 31)
+    }
+}
+
+final class BuyLinkTests: XCTestCase {
+    private func query(_ origin: BuyLink.Origin = .settings, version: String? = nil, tier: Tier = .free,
+                       grabs: Int = 0, translations: Int = 0, days: Int = 0) -> [String: String] {
+        let url = BuyLink.url(AppConstants.storeURL, version: version, from: origin, tier: tier, grabs: grabs,
+                              translations: translations, daysSinceFirstLaunch: days)
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+    }
+
+    func testOpensCheckoutWithTheVersionChosen() {
+        let text = query(version: "Text")
+        XCTAssertEqual(text["wanted"], "true")
+        XCTAssertEqual(text["variant"], "Text")
+        let upgrade = query()
+        XCTAssertEqual(upgrade["wanted"], "true")
+        XCTAssertNil(upgrade["variant"])
+    }
+
+    func testCampaignSaysWhereTheBuyButtonWasPressed() {
+        XCTAssertEqual(query(.settings)["utm_campaign"], "settings")
+        XCTAssertEqual(query(.window(nil))["utm_campaign"], "menu")
+        XCTAssertEqual(query(.window(.grabs(100)))["utm_campaign"], "limit-grabs")
+        XCTAssertEqual(query(.window(.translations(30, free: false)))["utm_campaign"], "limit-translations")
+        XCTAssertEqual(query(.window(.live))["utm_campaign"], "limit-live")
+    }
+
+    func testCarriesAllThreeRequiredParamsUsageAndTier() {
+        let tags = query(.settings, tier: .text, grabs: 87, translations: 30, days: 5)
+        XCTAssertEqual(tags["utm_source"], "lector-app")
+        XCTAssertEqual(tags["utm_medium"], "app")
+        XCTAssertEqual(tags["utm_term"], "g87-t30")
+        XCTAssertEqual(tags["utm_content"], "text-d2-7")
+    }
+
+    func testInstallAgeBucketBoundaries() {
+        XCTAssertEqual(query(.settings, days: -3)["utm_content"], "free-d0-1")
+        XCTAssertEqual(query(.settings, days: 1)["utm_content"], "free-d0-1")
+        XCTAssertEqual(query(.settings, days: 2)["utm_content"], "free-d2-7")
+        XCTAssertEqual(query(.settings, days: 7)["utm_content"], "free-d2-7")
+        XCTAssertEqual(query(.settings, days: 8)["utm_content"], "free-d8-30")
+        XCTAssertEqual(query(.settings, days: 30)["utm_content"], "free-d8-30")
+        XCTAssertEqual(query(.settings, days: 31)["utm_content"], "free-d31+")
+    }
+
+    func testPlusSurvivesAsALiteralPlusNotASpace() {
+        let url = BuyLink.url(AppConstants.storeURL, from: .settings, tier: .free, grabs: 0,
+                              translations: 0, daysSinceFirstLaunch: 40)
+        XCTAssertTrue(url.absoluteString.contains("utm_content=free-d31%2B"), url.absoluteString)
+    }
 }
 
 /// Gumroad stood in for by a table of keys.

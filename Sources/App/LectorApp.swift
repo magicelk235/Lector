@@ -293,7 +293,7 @@ private struct LicenseWindowContent: View {
     let holder: LicenseLimitHolder
 
     var body: some View {
-        LicenseView(license: license, usage: usage, limit: holder.limit)
+        LicenseView(license: license, usage: usage, origin: .window(holder.limit))
             .frame(width: 460, height: 580)
             .foregroundStyle(Color.ink)
             .tint(Color.accent)

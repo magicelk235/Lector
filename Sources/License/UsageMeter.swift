@@ -1,6 +1,7 @@
 import Foundation
 
 /// Grabs and translations used this calendar month. Each new month starts from zero.
+/// Also remembers the day Lector first ran, for the Buy links' install age.
 ///
 /// Kept in UserDefaults, so deleting Lector's preferences resets it. That's accepted:
 /// anyone who goes that far to avoid paying wasn't going to pay.
@@ -16,10 +17,12 @@ final class UsageMeter {
     }
 
     private static let defaultsKey = "Usage"
+    private static let firstLaunchKey = "FirstLaunch"
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let now: () -> Date
     private var stored: Stored
+    @ObservationIgnored private let firstLaunch: Date
 
     init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
         self.defaults = defaults
@@ -27,6 +30,17 @@ final class UsageMeter {
         stored = defaults.data(forKey: Self.defaultsKey)
             .flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
             ?? Stored(month: 0, grabs: 0, translations: 0)
+        if let recorded = defaults.object(forKey: Self.firstLaunchKey) as? Date {
+            firstLaunch = recorded
+        } else {
+            firstLaunch = now()
+            defaults.set(firstLaunch, forKey: Self.firstLaunchKey)
+        }
+    }
+
+    /// Whole days since Lector first ran on this Mac, or since the update that started counting.
+    var daysSinceFirstLaunch: Int {
+        Calendar.current.dateComponents([.day], from: firstLaunch, to: now()).day ?? 0
     }
 
     /// How many of `kind` this month so far.
