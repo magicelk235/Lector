@@ -12,8 +12,10 @@ import SwiftUI
 /// a paragraph, Esc or a click outside to close. Space flips to the original and back,
 /// and a copy takes whichever is on screen. Tab tries the next language the text could
 /// be in when the detected one is wrong, ⇧Tab the one before; after the last comes
-/// detecting it again. Unlike the word picker, the words carry no marks until the
-/// pointer is on them: the translation should read as text, not as a grid of boxes.
+/// detecting it again. A right-click on a word looks it up, and over the original adds
+/// it to the app's glossary (`WordMenu`). Unlike the word picker, the words carry no
+/// marks until the pointer is on them: the translation should read as text, not as a
+/// grid of boxes.
 ///
 /// Paragraphs are repainted as they arrive — an instant offline draft first where
 /// there is one, then Apple's version — but never in the middle of a drag. The pill
@@ -26,6 +28,13 @@ final class TranslationOverlayWindow: PickerWindow {
     let job: TranslationJob
     /// The user picked a source language with Tab, or went back to detecting it (nil).
     var onChooseSource: ((Locale.Language?) -> Void)?
+    /// A name seen often in the app's text, which N keeps as written.
+    var suggestedName: String? {
+        didSet { updateHint() }
+    }
+    /// N: keep `suggestedName` as written, in the app's glossary.
+    var onKeepName: ((String) -> Void)?
+    private let actions: WordActions
 
     private let original: (image: CGImage, text: RecognizedText, paragraphs: [Range<Int>])
     private let renderer: TranslationRenderer
@@ -46,7 +55,8 @@ final class TranslationOverlayWindow: PickerWindow {
     /// `rect` is where the capture was on screen, in global AppKit coordinates; `blocks`
     /// are `text`'s paragraphs, in the order `job` translates them.
     init(job: TranslationJob, image: CGImage, rect: CGRect, text: RecognizedText, blocks: [Paragraphs.Block],
-         pill: PillOptions) {
+         pill: PillOptions, actions: WordActions) {
+        self.actions = actions
         self.job = job
         let paragraphs = blocks.map(\.lines)
         original = (image, text, paragraphs)
@@ -59,6 +69,7 @@ final class TranslationOverlayWindow: PickerWindow {
                    pill: pill)
         picker.copiesAllWhenNothingSelected = true
         picker.marksEveryWord = false
+        picker.onContextMenu = { [weak self] term, line, anchor in self?.menu(for: term, line: line, anchor: anchor) }
 
         // Invisible: carries Apple's session where one is needed, and reports changes.
         let driver = NSHostingView(rootView: TranslationDriver(job: job) { [weak self] in self?.jobChanged() })
@@ -72,6 +83,30 @@ final class TranslationOverlayWindow: PickerWindow {
     override func present() {
         super.present()
         jobChanged()
+    }
+
+    /// The app's glossary changed: translated again with it, from the language chosen.
+    func glossaryChanged(_ terms: [GlossaryTerm]) {
+        if let suggestedName, terms.firstIndex(matching: suggestedName) != nil { self.suggestedName = nil }
+        job.glossary = terms
+        // A Tab's choice already made stays, and nothing is announced as if this were new.
+        announced = job.status
+        job.retranslate()
+    }
+
+    /// Over the original, the word can be looked up or go in the glossary; over the
+    /// translation, only looked up, in the language it's now in.
+    private func menu(for term: String, line: Int, anchor: CGRect) -> NSMenu? {
+        guard showsOriginal || translated == nil else {
+            let original = ClosureMenuItem("Show Original") { [weak self] in self?.toggleOriginal() }
+            return WordMenu.menu(for: term, language: job.target, isOriginal: false, actions: actions,
+                                 anchor: anchor, in: picker, extra: [original])
+        }
+        let paragraph = original.paragraphs.firstIndex { $0.contains(line) }
+        let language = paragraph.flatMap { job.paragraphSources.indices.contains($0) ? job.paragraphSources[$0] : nil }
+            ?? job.source
+        return WordMenu.menu(for: term, language: language, isOriginal: true, actions: actions, anchor: anchor,
+                             in: picker)
     }
 
     private func jobChanged() {
@@ -170,6 +205,10 @@ final class TranslationOverlayWindow: PickerWindow {
         }
         if let notice = job.notice { hint.notes.append(.warning(notice)) }
         if case .failed(let message) = job.status, message != job.notice { hint.notes.append(.warning(message)) }
+        if let suggestedName {
+            hint.notes.append(CaptureHint.Note(text: "“\(suggestedName)” looks like a name · N keeps it as written",
+                                               systemImage: "person.text.rectangle"))
+        }
         picker.showHint(hint)
     }
 
@@ -216,25 +255,41 @@ final class TranslationOverlayWindow: PickerWindow {
     }
 
     /// Space flips between translation and original; Tab and ⇧Tab change the language
-    /// translated from; everything else is the picker's.
+    /// translated from; N keeps a suggested name; everything else is the picker's.
     override func sendEvent(_ event: NSEvent) {
+        // Typing a glossary term in a popover reaches it through this window: a Space
+        // there is a space, not a flip to the original.
+        if LookupPopover.isEditing {
+            super.sendEvent(event)
+            return
+        }
+        let plain = event.modifierFlags.isDisjoint(with: [.command, .control, .option])
         if event.type == .keyDown, event.keyCode == 49 {
-            if let translated {
-                showsOriginal.toggle()
-                if showsOriginal {
-                    showOriginal()
-                } else {
-                    showTranslation(translated)
-                }
-                updateHint()
-            }
+            toggleOriginal()
             return
         }
         if event.type == .keyDown, event.keyCode == 48 {
             cycleSource(backwards: event.modifierFlags.contains(.shift))
             return
         }
+        // By key, not character: N wherever it is on a Hebrew or Russian keyboard.
+        if event.type == .keyDown, event.keyCode == 45, plain, let name = suggestedName {
+            suggestedName = nil
+            onKeepName?(name)
+            return
+        }
         super.sendEvent(event)
+    }
+
+    private func toggleOriginal() {
+        guard let translated else { return }
+        showsOriginal.toggle()
+        if showsOriginal {
+            showOriginal()
+        } else {
+            showTranslation(translated)
+        }
+        updateHint()
     }
 }
 

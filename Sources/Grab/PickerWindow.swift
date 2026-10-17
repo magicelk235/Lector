@@ -33,6 +33,10 @@ final class PickerView: NSView {
     var onCopy: ((String) -> Void)?
     /// Tab: translate what was captured, in place.
     var onTranslate: (() -> Void)?
+    /// A right-click on a word: the menu to show for `term` — the selection when the
+    /// click is on it and it's on one line, else the word — whose words lie at `anchor`
+    /// (this view's points) on `line` of the text shown. Nil shows no menu.
+    var onContextMenu: ((_ term: String, _ line: Int, _ anchor: CGRect) -> NSMenu?)?
 
     private var image: NSImage
     /// The capture, in this view's (flipped) points.
@@ -201,6 +205,11 @@ final class PickerView: NSView {
             onCancel?()
             return
         }
+        // A Control-click is a right-click, as everywhere on the Mac.
+        if event.modifierFlags.contains(.control) {
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return
+        }
         guard let word = WordHitTest.word(at: pixelPoint(point), in: text) else { return }
         pressStart = point
         if event.clickCount >= 2 {
@@ -226,6 +235,23 @@ final class PickerView: NSView {
     /// adjusted or looked at without the picker closing under it.
     override func mouseUp(with event: NSEvent) {
         pressStart = nil
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let onContextMenu, !isPressing,
+              let word = wordRects.firstIndex(where: { $0.insetBy(dx: -2, dy: -1).contains(point) })
+        else { return nil }
+        let line = text.words[word].lineIndex
+        var words = word...word
+        if let range = selection?.range, range.contains(word),
+           range.allSatisfy({ text.words[$0].lineIndex == line }) {
+            words = range
+        } else {
+            selection = WordSelection(word: word)
+        }
+        let anchor = words.dropFirst().reduce(wordRects[words.lowerBound]) { $0.union(wordRects[$1]) }
+        return onContextMenu(text.text(ofWords: words), line, anchor)
     }
 
     // MARK: Keyboard

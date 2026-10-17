@@ -60,6 +60,9 @@ final class TranslationJob {
     /// translated — while the rest is translated regardless.
     private(set) var notice: String?
     let target: Locale.Language
+    /// The terms this capture's app keeps or translates its own way, applied from the
+    /// next `start` on.
+    var glossary: [GlossaryTerm] = []
     /// Set to hand work to Apple through `.translationTask`: on macOS 15, and whenever
     /// Apple needs to ask the user to download a language.
     private(set) var appleConfiguration: TranslationSession.Configuration?
@@ -69,10 +72,18 @@ final class TranslationJob {
     var onSourceDetected: ((Locale.Language) -> Void)?
 
     private var texts: [String] = []
+    /// Each paragraph as the translators get it, its glossary terms swapped for marks.
+    /// Memory is kept under these, so a sentence seen again with another name in it, or
+    /// after a term's translation changed, is still found and given the current terms.
+    private var sent: [GlossaryText] = []
+    private let targetCode: String
     /// Translations handed in with `start`, by paragraph.
     private var known: [Int: String] = [:]
     /// Whether each paragraph has its final translation, which a draft mustn't replace.
     private var isFinal: [Bool] = []
+    /// Each paragraph's translation as a translator gave it, glossary marks and all: what
+    /// memory keeps, and what settles as final.
+    private var engineTexts: [String?] = []
     /// Why Apple or a download failed, for when nothing could be translated at all.
     private var failure: String?
     /// Bumped by every start, so work left over from before a restart drops its results.
@@ -88,6 +99,7 @@ final class TranslationJob {
 
     init(target: String, offline: OpusMTTranslator, appleSessions: AppleSessionCache, memory: TranslationMemory) {
         self.target = Locale.Language(identifier: target)
+        targetCode = target
         self.offline = offline
         self.appleSessions = appleSessions
         self.memory = memory
@@ -111,12 +123,15 @@ final class TranslationJob {
     func start(paragraphs: [String], choosing chosen: Locale.Language? = nil, firmly: Bool = false,
                known: [Int: String] = [:]) {
         texts = paragraphs
+        sent = paragraphs.map { GlossaryText($0, terms: glossary, target: targetCode) }
         chosenSource = chosen
         choiceIsFirm = firmly
         self.known = known
         generation += 1
         translations = Array(repeating: nil, count: paragraphs.count)
+        engineTexts = Array(repeating: nil, count: paragraphs.count)
         isFinal = Array(repeating: false, count: paragraphs.count)
+        paragraphSources = Array(repeating: nil, count: paragraphs.count)
         // Already on screen: up from the start, not once the plan is made.
         for (index, text) in known where translations.indices.contains(index) {
             translations[index] = text
@@ -143,6 +158,16 @@ final class TranslationJob {
         start(paragraphs: texts, choosing: chosen, firmly: true)
     }
 
+    /// The same paragraphs again, as they were chosen, after the glossary changed.
+    func retranslate() {
+        cancel()
+        start(paragraphs: texts, choosing: chosenSource, firmly: choiceIsFirm)
+    }
+
+    /// The language each paragraph is translated from, once the plan is made; nil for
+    /// one left as it is.
+    private(set) var paragraphSources: [Locale.Language?] = []
+
     func cancel() {
         job?.cancel()
         // Their own tasks, so closing the capture has to stop them explicitly; left
@@ -160,28 +185,42 @@ final class TranslationJob {
     private func translateAll(_ run: Int) async {
         let plan = TranslationPlan(texts, target: target, choosing: chosenSource, firmly: choiceIsFirm)
         source = plan.source
+        paragraphSources = plan.items.map { if case .translate(let language) = $0 { language } else { nil } }
         let letters = Dictionary(plan.groups.map { group in
             (group.source, group.paragraphs.reduce(0) { $0 + texts[$1].count(where: \.isLetter) })
         }, uniquingKeysWith: +)
         sourceLanguages = plan.groups.map(\.source).sorted { letters[$0, default: 0] > letters[$1, default: 0] }
         if let source { onSourceDetected?(source) }
+        // A paragraph that is nothing but glossary terms — a name on a label — is its
+        // terms, whatever language it could be told to be in, or none.
+        let onlyTerms = Set(sent.indices.filter { sent[$0].isOnlyTerms })
+        let changedTerms = onlyTerms.filter { sent[$0].restore(sent[$0].text) != texts[$0] }
+        for index in changedTerms {
+            show(sent[index].text, at: index, isFinal: true, source: nil, run: run)
+        }
         switch plan.outcome {
         case .translate: break
+        case _ where !changedTerms.isEmpty: status = .done; return
         case .alreadyInTarget: status = .sameLanguage; return
         case .nothingToTranslate: status = .nothingToTranslate; return
         case .unknownLanguage: status = .failed("Unknown language"); return
+        }
+        let groups = plan.groups.compactMap { group in
+            let left = group.paragraphs.filter { !onlyTerms.contains($0) }
+            return left.isEmpty ? nil : TranslationPlan.Group(source: group.source, paragraphs: left)
         }
 
         // What has been translated since launch shows at once; only the rest goes on.
         var pending: [TranslationPlan.Group] = []
         var remembered: [Locale.Language] = []
-        for group in plan.groups {
+        for group in groups {
             let left = group.paragraphs.filter { index in
                 if let text = known[index] {
-                    show(text, at: index, isFinal: true, source: group.source, run: run)
+                    // Already restored, and already remembered when it was first made.
+                    show(text, at: index, isFinal: true, source: nil, run: run)
                     return false
                 }
-                guard let known = memory.lookup(texts[index], from: group.source, to: target) else { return true }
+                guard let known = memory.lookup(sent[index].text, from: group.source, to: target) else { return true }
                 show(known.text, at: index, isFinal: known.isFinal, source: nil, run: run)
                 return !known.isFinal
             }
@@ -204,8 +243,12 @@ final class TranslationJob {
             }
         }
         guard run == generation, !Task.isCancelled else { return }
-        let missing = plan.translated.filter { translations[$0] == nil }
-        status = missing.count == plan.translated.count
+        let missing = groups.flatMap(\.paragraphs).filter { translations[$0] == nil }
+        guard !groups.isEmpty else {
+            status = .done
+            return
+        }
+        status = missing.count == groups.flatMap(\.paragraphs).count
             ? .failed(failure ?? notice ?? "Couldn't translate this text.")
             : .done
     }
@@ -297,17 +340,20 @@ final class TranslationJob {
         }
     }
 
-    /// Puts a paragraph's translation up, unless it's a draft and the final one is
-    /// already there, and keeps it for the next time the same text turns up.
+    /// Puts a paragraph's translation up, its glossary terms back in place, unless it's a
+    /// draft and the final one is already there, and keeps it for the next time the same
+    /// text turns up. `text` is as a translator gave it, with the marks.
     private func show(_ text: String, at index: Int, isFinal final: Bool, source: Locale.Language?, run: Int) {
         guard run == generation, !Task.isCancelled, translations.indices.contains(index),
               final || !isFinal[index] else { return }
-        if translations[index] != text {
-            translations[index] = text
+        let restored = sent[index].restore(text)
+        if translations[index] != restored {
+            translations[index] = restored
             revision += 1
         }
+        engineTexts[index] = text
         isFinal[index] = isFinal[index] || final
-        if let source { memory.remember(text, isFinal: final, for: texts[index], from: source, to: target) }
+        if let source { memory.remember(text, isFinal: final, for: sent[index].text, from: source, to: target) }
     }
 
     // MARK: Offline
@@ -317,7 +363,7 @@ final class TranslationJob {
     private func draftOffline(_ group: TranslationPlan.Group, run: Int) async {
         let (lines, sink) = AsyncStream.makeStream(of: (index: Int, text: String).self)
         let offline = offline, target = target, source = group.source
-        let texts = group.paragraphs.map { self.texts[$0] }
+        let texts = group.paragraphs.map { self.sent[$0].text }
         let translation = Task.detached(priority: .userInitiated) {
             defer { sink.finish() }
             _ = try? await offline.translate(lines: texts, from: source, to: target) { sink.yield(($0, $1)) }
@@ -334,7 +380,7 @@ final class TranslationJob {
     /// The offline drafts are the translation: nothing better is coming for this pair.
     private func settle(_ group: TranslationPlan.Group, run: Int) {
         for index in group.paragraphs {
-            if let text = translations[index] { show(text, at: index, isFinal: true, source: group.source, run: run) }
+            if let text = engineTexts[index] { show(text, at: index, isFinal: true, source: group.source, run: run) }
         }
     }
 
@@ -441,7 +487,7 @@ final class TranslationJob {
     /// is up within about half a second.
     private func translate(_ group: TranslationPlan.Group, with box: SessionBox, prepare: Bool, drafted: Bool,
                            run: Int) async throws {
-        let texts = group.paragraphs.map { self.texts[$0] }
+        let texts = group.paragraphs.map { self.sent[$0].text }
         let source = group.source
         let windows = appleSessions.contextWorks(from: source, to: target)
             ? ContextWindows.windows(texts, lead: drafted ? nil : ContextWindows.lead).flatMap { window in

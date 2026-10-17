@@ -48,6 +48,32 @@ struct PillOptions: Codable, Equatable, Sendable {
     }
 }
 
+/// A word or name an app's text should keep, or always translate the same way: a
+/// character's name, a place, a game's own term. Only terms the user added are kept.
+struct GlossaryTerm: Codable, Equatable, Hashable, Sendable {
+    /// As it's written in the app.
+    var original: String
+    /// What to put in its place, or nil to keep it as it's written.
+    var translation: String?
+    /// The language `translation` is in: it applies only to translations into that one.
+    /// Nil with a nil `translation`.
+    var target: String?
+
+    static func keep(_ original: String) -> GlossaryTerm {
+        GlossaryTerm(original: original, translation: nil, target: nil)
+    }
+}
+
+/// Where live translation watched in an app's window, as shares of the window's width
+/// and height from its top-left corner: a game or a video scales its picture with its
+/// window, so the same dialogue box is found at a new size, or full screen.
+struct LiveArea: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+
 struct AppSettings: Codable, Equatable, Sendable {
     var grabShortcut: Shortcut = .grabDefault
     var translateShortcut: Shortcut = .translateDefault
@@ -68,6 +94,11 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// can't translate, where they are the only way.
     var prefetchesPacks = false
     var pill = PillOptions()
+    /// Each app's glossary, by bundle identifier.
+    var glossaries: [String: [GlossaryTerm]] = [:]
+    /// The area live translation last watched in each app, by bundle identifier: ⌘⇧9
+    /// there watches it again without drawing it.
+    var liveAreas: [String: LiveArea] = [:]
 
     static var systemLanguage: String {
         Locale.current.language.languageCode?.identifier ?? "en"
@@ -88,6 +119,8 @@ struct AppSettings: Codable, Equatable, Sendable {
         recentSources = try container.decodeIfPresent([String].self, forKey: .recentSources) ?? []
         prefetchesPacks = try container.decodeIfPresent(Bool.self, forKey: .prefetchesPacks) ?? false
         pill = try container.decodeIfPresent(PillOptions.self, forKey: .pill) ?? PillOptions()
+        glossaries = try container.decodeIfPresent([String: [GlossaryTerm]].self, forKey: .glossaries) ?? [:]
+        liveAreas = try container.decodeIfPresent([String: LiveArea].self, forKey: .liveAreas) ?? [:]
     }
 
     /// Notes a translation into `target` from `source`, the language most of the text

@@ -123,9 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = AppController(settings: store.settings, license: license, usage: UsageMeter())
         store.onChange = { [weak controller] settings in controller?.apply(settings) }
         controller.onChooseSource = { [weak store] app, language in store?.settings.sourceLanguages[app] = language }
+        controller.onChangeGlossary = { [weak store] app, terms in
+            store?.settings.glossaries[app] = terms.isEmpty ? nil : terms
+        }
         controller.onTranslate = { [weak store] target, source in
             store?.settings.noteTranslation(into: target, from: source)
         }
+        controller.onRememberLiveArea = { [weak store] app, area in store?.settings.liveAreas[app] = area }
         controller.onNeedsPermission = { [weak self] in self?.showOnboarding() }
         controller.onLimit = { [weak self] limit in self?.showLicense(limit: limit) }
         Task { await license.refresh() }

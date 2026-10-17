@@ -49,13 +49,29 @@ final class TranslationJobTests: XCTestCase {
 
     private var directory: URL!
 
-    private func makeJob() throws -> TranslationJob {
+    private let memory = TranslationMemory()
+
+    private func makeJob(target: String = "en") throws -> TranslationJob {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TranslationJobTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
         self.directory = directory
-        return TranslationJob(target: "en", offline: OpusMTTranslator(modelsDirectory: directory),
-                              appleSessions: AppleSessionCache(), memory: TranslationMemory())
+        return TranslationJob(target: target, offline: OpusMTTranslator(modelsDirectory: directory),
+                              appleSessions: AppleSessionCache(), memory: memory)
+    }
+
+    /// A sentence translated before with one name in it is found in memory with another,
+    /// and comes back with the name it has now.
+    func testGlossaryTermsComeBackIntoATranslationFromMemory() async throws {
+        let job = try makeJob(target: "es")
+        defer { job.cancel() }
+        memory.remember("Habla con ZX1Q antes de irte.", isFinal: true, for: "Talk to ZX1Q before you leave.",
+                        from: Locale.Language(identifier: "en"), to: Locale.Language(identifier: "es"))
+        job.glossary = [.keep("Link")]
+
+        job.start(paragraphs: ["Talk to Link before you leave."], choosing: Locale.Language(identifier: "en"))
+        try await waitUntil { job.translations[0] != nil }
+        XCTAssertEqual(job.translations, ["Habla con Link antes de irte."])
     }
 
     private func waitUntil(_ condition: () -> Bool) async throws {

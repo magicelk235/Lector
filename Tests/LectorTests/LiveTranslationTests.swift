@@ -401,3 +401,149 @@ final class LiveReadingTests: XCTestCase {
         XCTAssertEqual(cleaned.words.map(\.lineIndex), [0])
     }
 }
+
+final class LiveWindowTests: XCTestCase {
+    /// Lector's process, whose windows are looked through.
+    private let lector: pid_t = 1
+
+    private func window(_ id: CGWindowID, of pid: pid_t = 2, layer: Int = 0, at frame: CGRect,
+                        onScreen: Bool = true) -> WindowEntry {
+        WindowEntry(id: id, pid: pid, layer: layer, frame: frame, alpha: 1, isOnScreen: onScreen)
+    }
+
+    /// The window server measures down from the primary display's top-left corner, AppKit
+    /// up from its bottom-left. Measured on a MacBook Pro with a 982-point display: a
+    /// 400×332 window 60 points up from the bottom is 590 down from the top.
+    func testWindowServerBoundsTurnIntoAppKitCoordinatesAndBack() {
+        let bounds = CGRect(x: 60, y: 590, width: 400, height: 332)
+        let frame = WindowList.flipped(bounds, primaryHeight: 982)
+        XCTAssertEqual(frame, CGRect(x: 60, y: 60, width: 400, height: 332))
+        XCTAssertEqual(WindowList.flipped(frame, primaryHeight: 982), bounds)
+        // On a display above and to the left of the primary one.
+        XCTAssertEqual(WindowList.flipped(CGRect(x: -1920, y: -1080, width: 800, height: 600), primaryHeight: 982),
+                       CGRect(x: -1920, y: 1462, width: 800, height: 600))
+    }
+
+    /// The watch takes a part of a window measured down from the window's top-left corner.
+    func testAreaIsMeasuredFromTheTopLeftCornerOfItsWindow() {
+        let frame = CGRect(x: 100, y: 200, width: 800, height: 600)
+        XCTAssertEqual(WindowList.offset(CGRect(x: 200, y: 230, width: 600, height: 90), in: frame),
+                       CGRect(x: 100, y: 480, width: 600, height: 90))
+    }
+
+    /// Subtitles kept as shares of their window stay on the same part of it: moved, the
+    /// window takes them along; made full screen, they grow as the picture does.
+    func testAreaKeepsItsShareOfTheWindow() {
+        let frame = CGRect(x: 100, y: 200, width: 800, height: 600)
+        let subtitles = CGRect(x: 200, y: 230, width: 600, height: 90)
+        let area = LiveArea(subtitles, in: frame)
+        XCTAssertEqual(area.x, 0.125, accuracy: 1e-9)
+        XCTAssertEqual(area.y, 0.8, accuracy: 1e-9)
+        XCTAssertEqual(area.width, 0.75, accuracy: 1e-9)
+        XCTAssertEqual(area.height, 0.15, accuracy: 1e-9)
+        assertEqual(area.rect(in: frame), subtitles)
+        assertEqual(area.rect(in: frame.offsetBy(dx: 300, dy: -150)), subtitles.offsetBy(dx: 300, dy: -150))
+        assertEqual(area.rect(in: CGRect(x: 0, y: 0, width: 1600, height: 1200)),
+                    CGRect(x: 200, y: 60, width: 1200, height: 180))
+    }
+
+    /// A window Space-clicked whole, the small window of its title bar's buttons in front
+    /// of it included, or a dialogue box dragged a little past the window's bottom edge:
+    /// either way the area is in the window.
+    func testAreaDrawnInAWindowIsInThatWindow() {
+        let game = window(10, at: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        let buttons = window(11, at: CGRect(x: 6, y: 674, width: 66, height: 20))
+        let behind = window(12, of: 3, at: CGRect(x: 0, y: 0, width: 1400, height: 900))
+        let windows = [buttons, game, behind]
+        XCTAssertEqual(WindowList.holding(game.frame, among: windows, own: lector), game)
+        XCTAssertEqual(WindowList.holding(CGRect(x: 100, y: -10, width: 800, height: 150), among: windows, own: lector),
+                       game)
+    }
+
+    /// An area across two windows, or largely under a window in front of the one it's on,
+    /// is in none: it's watched where it was drawn.
+    func testAreaAcrossWindowsIsInNone() {
+        let left = window(10, at: CGRect(x: 0, y: 0, width: 500, height: 700))
+        let right = window(12, of: 3, at: CGRect(x: 500, y: 0, width: 500, height: 700))
+        XCTAssertNil(WindowList.holding(CGRect(x: 300, y: 100, width: 400, height: 100), among: [left, right], own: lector))
+
+        let chat = window(13, of: 4, at: CGRect(x: 250, y: 50, width: 300, height: 300))
+        let game = window(10, at: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        XCTAssertNil(WindowList.holding(CGRect(x: 100, y: 100, width: 400, height: 100), among: [chat, game], own: lector))
+    }
+
+    /// Lector's own windows — the translation itself, Settings — and the Dock and the menu
+    /// bar are looked through to the window under them, as the watch looks through them.
+    func testLectorTheDockAndTheMenuBarAreLookedThrough() {
+        let area = CGRect(x: 100, y: 100, width: 400, height: 100)
+        let panel = window(20, of: lector, layer: 25, at: area.insetBy(dx: -2, dy: -2))
+        let settings = window(21, of: lector, at: CGRect(x: 0, y: 0, width: 600, height: 500))
+        let menuBar = window(22, of: 5, layer: 24, at: CGRect(x: 0, y: 180, width: 1000, height: 33))
+        let dock = window(23, of: 6, layer: 20, at: CGRect(x: 0, y: 0, width: 1000, height: 120))
+        let game = window(10, at: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        XCTAssertEqual(WindowList.holding(area, among: [panel, settings, menuBar, dock, game], own: lector), game)
+        XCTAssertEqual(WindowList.hidden(area, by: [panel, settings, menuBar, dock], own: lector), 0)
+    }
+
+    /// A window brought over the area takes the translation down; one barely reaching it
+    /// doesn't.
+    func testWindowInFrontHidesTheAreaWhenItCoversMuchOfIt() {
+        let area = CGRect(x: 100, y: 100, width: 400, height: 100)
+        let browser = window(30, of: 7, at: CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertGreaterThanOrEqual(WindowList.hidden(area, by: [browser], own: lector), WindowList.hides)
+        let corner = window(31, of: 7, at: CGRect(x: 490, y: 0, width: 300, height: 600))
+        XCTAssertLessThan(WindowList.hidden(area, by: [corner], own: lector), WindowList.hides)
+    }
+
+    /// A remembered area is watched in the app's front window: not in one of its small
+    /// ones, nor in one that's minimised.
+    func testRememberedAreaIsWatchedInTheFrontWindowOfItsApp() {
+        let other = window(12, of: 3, at: CGRect(x: 0, y: 0, width: 1400, height: 900))
+        let buttons = window(11, at: CGRect(x: 6, y: 674, width: 66, height: 20))
+        let minimised = window(14, at: CGRect(x: 0, y: 0, width: 1000, height: 700), onScreen: false)
+        let game = window(10, at: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        let launcher = window(15, at: CGRect(x: 200, y: 200, width: 500, height: 400))
+        XCTAssertEqual(WindowList.frontmost(of: 2, among: [other, buttons, minimised, game, launcher]), game)
+        XCTAssertNil(WindowList.frontmost(of: 9, among: [other, game]))
+    }
+
+    /// An area dragged a little past its window's edge is cut back to the window, and the
+    /// capture it was drawn on with it: the part kept, not the part left out.
+    func testCaptureIsCutBackWithTheArea() throws {
+        // 100×50 points at 2×: red over blue.
+        let context = try XCTUnwrap(CGContext(data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 200, height: 50))
+        context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: 50, width: 200, height: 50))
+        let image = try XCTUnwrap(context.makeImage())
+        let drawn = CGRect(x: 10, y: 20, width: 100, height: 50)
+
+        let top = try XCTUnwrap(LiveTranslation.crop(image, of: drawn, to: CGRect(x: 10, y: 45, width: 100, height: 25)))
+        XCTAssertEqual([top.width, top.height], [200, 50])
+        XCTAssertEqual(try color(of: top), [255, 0, 0])
+        let bottom = try XCTUnwrap(LiveTranslation.crop(image, of: drawn, to: CGRect(x: 10, y: 20, width: 100, height: 25)))
+        XCTAssertEqual(try color(of: bottom), [0, 0, 255])
+    }
+
+    /// An image's colour, all of it drawn into one pixel.
+    private func color(of image: CGImage) throws -> [UInt8] {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        try pixel.withUnsafeMutableBytes { bytes in
+            let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                                                  bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return Array(pixel.prefix(3))
+    }
+
+    private func assertEqual(_ rect: CGRect, _ expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
+        for (value, wanted) in zip([rect.minX, rect.minY, rect.width, rect.height],
+                                   [expected.minX, expected.minY, expected.width, expected.height]) {
+            XCTAssertEqual(value, wanted, accuracy: 1e-9, "\(rect) isn't \(expected)", file: file, line: line)
+        }
+    }
+}

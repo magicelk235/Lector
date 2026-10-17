@@ -82,6 +82,36 @@ and those of its region, such as Hebrew and Arabic in Israel. Chinese is offered
 as Simplified and Traditional. You can change all three shortcuts in
 Settings › General.
 
+## Look up a word
+
+Right-click a word, or Control-click it, over a grab or a translation and choose
+Look Up. A small window shows the word, how it's read when its letters don't say
+(kana over kanji, pinyin for Chinese, a romanisation for Korean, Russian, Greek,
+Thai and other scripts), its translation into your language and what the
+Mac's dictionaries say about it. Open in Dictionary shows the full entry. Select
+several words on one line first to look them up together. Looking up a word
+doesn't count as a translation.
+
+## Glossary
+
+Each app can have a glossary of names and terms that its text keeps as written or
+always translates the same way, so a character called Cloud stays Cloud instead
+of becoming the weather, and a place has one spelling in every line.
+
+Right-click a word in the original (press Space over a translation to see it)
+and choose Keep as Written or Always Translate As…. The translation on screen
+updates straight away. Settings › Glossary lists each app's terms. You can change
+a translation there, add a term by typing it, or remove one. A term's
+translation applies when translating into the language it was written in. A kept
+term applies whatever you translate into.
+
+Lector also notices names that keep turning up in what you translate from an
+app. When one appears in a capture, the bar under it offers to keep it: press N.
+Settings › Glossary lists the rest under Names seen often. These are kept in
+memory only and forgotten when Lector quits. The name spotting works best in
+languages written with capitals, such as English, French, German or Russian, and
+rarely finds Japanese or Chinese names.
+
 ## Live translation with ⌘⇧9 (beta)
 
 Draw around game dialogue, video subtitles or any part of the screen whose
@@ -90,10 +120,26 @@ the new translation appears over it, usually within a second. Lines it has
 translated before come back at once. The translation doesn't take clicks or
 keys, so the game or video underneath keeps working.
 
+An area you draw inside one window stays with that window. Move the window and
+the translation moves with it. Resize it or make it full screen and Lector keeps
+watching the same part of it, since games and video players scale their picture
+with the window. While the window is minimised, on another Space or behind
+another window, the translation is hidden, and it comes back with the window.
+Lector reads only that window, so nothing that covers it gets translated.
+Closing the window stops live translation. An area that spans more than one
+window, or isn't in a window at all, is watched where you drew it.
+
 Lector only reads the area again when something in it changes, and it waits
 for a fade or a scroll to finish first, so a still screen costs almost nothing.
 Press ⌘⇧9 again or Esc to stop, or choose Stop Live Translation from the menu
 bar. Live translation comes with the Translate plan.
+
+When the area is in a window, Lector also remembers it for that app. The next
+time you press ⌘⇧9 in the app, Lector watches the same part of its front window
+straight away, without the crosshair. To draw a new area instead, press ⌘⇧9
+again while the message saying so is up: the crosshair comes back, and the new
+area replaces the old one. Settings › Translation lists the apps with a
+remembered area, and you can forget one there.
 
 Live translation is in beta. A subtitle that's on screen for less than about a
 second can be gone before its translation shows up, and over moving video the
@@ -161,9 +207,10 @@ that Lector reads and deletes straight away. Live translation watches only the
 area you drew, only until you stop it, and reads it in memory without saving
 anything. Nothing you capture is kept, logged or sent anywhere, and there are no
 analytics. Lector stores only its settings, such as the language you picked for
-an app, the last few languages you translated between, to offer them first, your
-license key, and how many grabs and translations you've made this month; never
-the text itself.
+an app, the last few languages you translated between, to offer them first, the
+glossary terms you added, where live translation watched in each app, your
+license key, and how many grabs and translations you've made this month;
+never the text you captured.
 
 Lector downloads language packs from Hugging Face, only as described under
 Languages. If you enter a license key, Lector sends that key to Gumroad to check

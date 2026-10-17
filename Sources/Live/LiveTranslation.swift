@@ -1,5 +1,6 @@
 import AppKit
 import LectorKit
+import ScreenCaptureKit
 import SwiftUI
 
 /// Live translation of one region of the screen — game dialogue, video subtitles:
@@ -15,15 +16,35 @@ import SwiftUI
 /// translation never stays over text it doesn't say: where a still screen changes, it
 /// comes off at once, before the new text is even read, and the new translation takes
 /// its place as soon as it's ready.
+///
+/// A region drawn in a window is watched in that window, and the translation stays with
+/// it: moved along when the window moves, kept on the same part of it when it's resized
+/// or made full screen, and taken down while the window can't be seen there — minimised,
+/// on another Space, behind another window. Closing the window ends it.
 @MainActor
 final class LiveTranslation {
-    /// The region, in global AppKit coordinates.
-    let rect: CGRect
-    /// It stopped by itself — the display went away, the stream failed — and why.
+    /// What's watched: part of the screen, where it was drawn, or part of a window, which
+    /// the translation follows.
+    enum Place {
+        /// In global AppKit coordinates.
+        case screen(CGRect)
+        /// The window as it was when the region was drawn or remembered, and the region as
+        /// shares of it: a game or a video scales its picture with its window, so the
+        /// shares keep the region on the same text whatever size the window is.
+        case window(WindowEntry, LiveArea)
+    }
+
+    /// Where the region is, in global AppKit coordinates: in a window, wherever the window
+    /// has gone since.
+    private(set) var rect: CGRect
+    /// It stopped by itself — the display went away, the window closed, the stream
+    /// failed — and why.
     var onEnd: ((String) -> Void)?
 
+    private let place: Place
     private let target: String
     private let chosen: Locale.Language?
+    private let glossary: [GlossaryTerm]
     private let offline: OpusMTTranslator
     private let appleSessions: AppleSessionCache
     private let memory: TranslationMemory
@@ -52,12 +73,45 @@ final class LiveTranslation {
     private var downloading = false
     private var stopped = false
 
-    /// - Parameter chosen: what the user said the app's text is in, if they did.
-    init(rect: CGRect, target: String, choosing chosen: Locale.Language?, offline: OpusMTTranslator,
-         appleSessions: AppleSessionCache, memory: TranslationMemory, reader: ScreenTextReader) {
+    /// The followed window's frame, and its display's pixels a point, as the region was
+    /// last placed for them.
+    private var windowFrame = CGRect.zero
+    private var scale: CGFloat = 2
+    /// The window's size changed: once it holds still, the region is read at its new size.
+    private var resizing = false
+    /// The watch is taking on the region's new place in the window; or, when it wouldn't —
+    /// while the screen is locked, say — the time to try again from.
+    private var reframing = false
+    private var reframeAgain: TimeInterval = 0
+    /// How many times the window has been resized, counted as the watcher counts them
+    /// (`RegionWatcher.hold`): a reading begun before the last time is of the region as it
+    /// was, and is let go.
+    private var framing = 0
+    /// Whether the panel is up: not while the region can't be seen.
+    private var revealed = true
+    private var following: Task<Void, Never>?
+
+    /// - Parameters:
+    ///   - chosen: what the user said the app's text is in, if they did.
+    ///   - glossary: the app's glossary, for every paragraph translated.
+    init(_ place: Place, target: String, choosing chosen: Locale.Language?, glossary: [GlossaryTerm],
+         offline: OpusMTTranslator, appleSessions: AppleSessionCache, memory: TranslationMemory,
+         reader: ScreenTextReader) {
+        let rect: CGRect
+        switch place {
+        case .screen(let drawn):
+            rect = drawn
+        case .window(let window, let area):
+            let layout = Self.layout(area, in: window.frame)
+            rect = layout.rect
+            windowFrame = window.frame
+            scale = layout.scale
+        }
+        self.place = place
         self.rect = rect
         self.target = target
         self.chosen = chosen
+        self.glossary = glossary
         self.offline = offline
         self.appleSessions = appleSessions
         self.memory = memory
@@ -65,36 +119,45 @@ final class LiveTranslation {
         panel = LivePanel(region: rect)
     }
 
-    /// Puts the panel up, translates `first` — the capture the region was drawn on — at
-    /// once, and starts watching for changes.
+    /// Puts the panel up, translates `first` — the region as it was drawn, or as its window
+    /// shows it now — at once, and starts watching for changes; in a window, following it.
     func start(first: CGImage) async throws {
         panel.orderFrontRegardless()
-        read(first, signature: nil)
+        read(first, signature: nil, framing: framing)
 
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
-                ?? NSScreen.screens.first(where: { $0.frame.intersects(rect) }),
-              let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-        else { throw LiveError.offScreen }
-        let frame = screen.frame
-        let region = CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
-            .intersection(CGRect(origin: .zero, size: frame.size))
-
-        watcher.onFrame = { [weak self] image, signature in
-            Task { @MainActor in self?.read(image, signature: signature) }
+        watcher.onFrame = { [weak self] image, signature, framing in
+            Task { @MainActor in self?.read(image, signature: signature, framing: framing) }
         }
         watcher.onFailure = { [weak self] error in
-            Task { @MainActor in self?.end(error.localizedDescription) }
+            Task { @MainActor in self?.failed(error) }
         }
         watcher.onUnread = { [weak self] area in
             Task { @MainActor in self?.unreadChanged(area) }
         }
-        try await watcher.start(display: number, region: region, scale: screen.backingScaleFactor)
+        switch place {
+        case .screen:
+            guard let screen = NSScreen.screens.first(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
+                    ?? NSScreen.screens.first(where: { $0.frame.intersects(rect) }),
+                  let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            else { throw LiveError.offScreen }
+            let frame = screen.frame
+            let region = CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+                .intersection(CGRect(origin: .zero, size: frame.size))
+            try await watcher.start(display: number, region: region, scale: screen.backingScaleFactor)
+        case .window(let window, _):
+            try await watcher.start(window: window.id, region: WindowList.offset(rect, in: windowFrame), scale: scale)
+        }
         // Stopped while the stream was starting: it mustn't outlive the session.
-        if stopped { watcher.stop() }
+        if stopped {
+            watcher.stop()
+        } else if case .window(let window, _) = place {
+            follow(window.id)
+        }
     }
 
     func stop() {
         stopped = true
+        following?.cancel()
         watcher.stop()
         job?.cancel()
         panel.orderOut(nil)
@@ -110,14 +173,141 @@ final class LiveTranslation {
         onEnd?(reason)
     }
 
+    /// The stream stopped by itself. A window that closes stops it before the window list
+    /// has caught up, with a message about finding nothing to capture.
+    private func failed(_ error: Error) {
+        if case .window(let window, _) = place,
+           (error as? SCStreamError)?.code == .noCaptureSource || WindowList.entry(window.id) == nil {
+            end(LiveError.windowClosed.localizedDescription)
+        } else {
+            end(error.localizedDescription)
+        }
+    }
+
+    // MARK: Following a window
+
+    /// `area` of `window` as it is now: the first reading of a remembered area, which has
+    /// no capture from the crosshair to start from.
+    static func snapshot(of area: LiveArea, in window: WindowEntry) async throws -> CGImage {
+        let layout = Self.layout(area, in: window.frame)
+        return try await RegionWatcher.snapshot(window: window.id, region: WindowList.offset(layout.rect, in: window.frame),
+                                                scale: layout.scale)
+    }
+
+    /// The part of `image`, a capture of `drawn`, that shows `kept`, a rect inside it: an
+    /// area drawn a little past the edge of its window, cut back to the window.
+    nonisolated static func crop(_ image: CGImage, of drawn: CGRect, to kept: CGRect) -> CGImage? {
+        guard kept != drawn else { return image }
+        let scaleX = CGFloat(image.width) / drawn.width, scaleY = CGFloat(image.height) / drawn.height
+        return image.cropping(to: CGRect(x: (kept.minX - drawn.minX) * scaleX, y: (drawn.maxY - kept.maxY) * scaleY,
+                                         width: kept.width * scaleX, height: kept.height * scaleY).integral)
+    }
+
+    /// Where `area` is with its window at `frame`, on whole pixels of the display it's on,
+    /// and that display's pixels a point.
+    private static func layout(_ area: LiveArea, in frame: CGRect) -> (rect: CGRect, scale: CGFloat) {
+        let exact = area.rect(in: frame)
+        let middle = CGPoint(x: exact.midX, y: exact.midY)
+        let scale = (NSScreen.screens.first { $0.frame.contains(middle) } ?? NSScreen.main)?.backingScaleFactor ?? 2
+        func pixel(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+        let rect = CGRect(x: pixel(exact.minX), y: pixel(exact.minY),
+                          width: pixel(exact.maxX) - pixel(exact.minX), height: pixel(exact.maxY) - pixel(exact.minY))
+        return (rect, scale)
+    }
+
+    /// Looks at the window ten times a second; a look is the window's own entry and the
+    /// few windows in front of it, next to nothing.
+    private func follow(_ id: CGWindowID) {
+        following = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, !Task.isCancelled else { return }
+                look(at: id)
+            }
+        }
+    }
+
+    /// Keeps the panel over the region wherever the window has gone and at the same share
+    /// of it whatever its size, and up only while the region can be seen.
+    private func look(at id: CGWindowID) {
+        guard case .window(_, let area) = place, !stopped else { return }
+        guard let window = WindowList.entry(id) else {
+            end(LiveError.windowClosed.localizedDescription)
+            return
+        }
+        // Minimised, hidden or on another Space: wherever it comes back, the first look
+        // after finds it.
+        guard window.isOnScreen else {
+            reveal(false)
+            return
+        }
+        let layout = Self.layout(area, in: window.frame)
+        if window.frame != windowFrame || layout.scale != scale {
+            let resized = window.frame.size != windowFrame.size || layout.scale != scale
+            windowFrame = window.frame
+            scale = layout.scale
+            rect = layout.rect
+            panel.place(rect)
+            if resized { windowResized() }
+        } else if resizing, !reframing, ProcessInfo.processInfo.systemUptime >= reframeAgain {
+            // It's held still since the last look: the region is read at its new size.
+            reframe()
+        }
+        let own = ProcessInfo.processInfo.processIdentifier
+        reveal(WindowList.hidden(rect, by: WindowList.inFront(of: id), own: own) < WindowList.hides)
+    }
+
+    /// The window is being resized, and the picture under the region changes with it:
+    /// until it holds still, nothing read there is the region. What's painted comes off,
+    /// as it does wherever the text under it may have changed, and once the window has
+    /// settled the region is read afresh, its lines coming back from memory.
+    private func windowResized() {
+        resizing = true
+        framing = watcher.hold()
+        renderer = nil
+        lines = []
+        blocks = []
+        shown = []
+        painting = []
+        standIns = []
+        painted = []
+        unread = .none
+        panel.show(nil, saying: "")
+    }
+
+    private func reframe() {
+        reframing = true
+        let framing = self.framing, region = WindowList.offset(rect, in: windowFrame), scale = self.scale
+        Task {
+            let done = await watcher.reframe(region, scale: scale)
+            reframing = false
+            if !done {
+                reframeAgain = ProcessInfo.processInfo.systemUptime + 1
+            } else if framing == self.framing {
+                resizing = false
+            }
+        }
+    }
+
+    private func reveal(_ visible: Bool) {
+        guard visible != revealed else { return }
+        revealed = visible
+        if visible {
+            panel.orderFrontRegardless()
+        } else {
+            panel.orderOut(nil)
+        }
+    }
+
     // MARK: Reading
 
-    private func read(_ image: CGImage, signature: FrameSignature?) {
+    private func read(_ image: CGImage, signature: FrameSignature?, framing: Int) {
         Task {
             let text = LiveReading.cleaned((try? await reader.read(image)) ?? .empty)
-            guard !stopped else { return }
+            // Read before the window was last resized: the region as it was, at its old size.
+            guard !stopped, framing == self.framing else { return }
             let changed = show(text, in: image)
-            if let signature { watcher.finishedReading(signature, textChanged: changed) }
+            if let signature { watcher.finishedReading(signature, framing: framing, textChanged: changed) }
         }
     }
 
@@ -147,6 +337,7 @@ final class LiveTranslation {
         for (index, translation) in reused.enumerated() {
             if let translation, !translation.isEmpty { known[index] = translation }
         }
+        job.glossary = glossary
         job.start(paragraphs: blocks.map(\.text), choosing: chosen, known: known)
         self.job = job
         renderer = TranslationRenderer(capture: image, original: text, blocks: blocks,
@@ -220,9 +411,13 @@ final class LiveTranslation {
 
 enum LiveError: LocalizedError {
     case offScreen
+    case windowClosed
 
     var errorDescription: String? {
-        "Can't watch that area"
+        switch self {
+        case .offScreen: "Can't watch that area"
+        case .windowClosed: "The window closed"
+        }
     }
 }
 
@@ -254,6 +449,12 @@ final class LivePanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// Moves the panel over `region`, in global AppKit coordinates: where the region is now
+    /// that its window has moved or been resized.
+    func place(_ region: CGRect) {
+        setFrame(region.insetBy(dx: -LiveView.edge, dy: -LiveView.edge), display: true)
+    }
 
     /// Hosts the job's driver: change reports, and Apple's session on macOS 15.
     func watch(_ job: TranslationJob, changed: @escaping () -> Void) {

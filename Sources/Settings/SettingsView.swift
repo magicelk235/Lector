@@ -14,6 +14,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             TranslationSettings(store: store, offline: controller.offline)
                 .tabItem { Label("Translation", systemImage: "character.bubble") }
+            GlossarySettings(store: store, names: controller.names)
+                .tabItem { Label("Glossary", systemImage: "text.book.closed") }
             LicenseView(license: controller.license, usage: controller.usage)
                 .tabItem { Label("License", systemImage: "key") }
             AcknowledgementsSettings()
@@ -117,6 +119,7 @@ private struct TranslationSettings: View {
             }
 
             AppLanguagesSection(store: store)
+            LiveAreasSection(store: store)
 
             Section {
                 Toggle(isOn: $store.settings.prefetchesPacks) {
