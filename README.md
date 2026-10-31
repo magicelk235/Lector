@@ -8,6 +8,8 @@ screen, ⌘⇧1 to read it translated right where it is, or ⌘⇧9 to keep an a
 translated as its text changes. All three open macOS's own ⌘⇧4 crosshair, and
 Lector reads and translates the text on your Mac.
 
+More at [magicelklabs.com/lector](https://magicelklabs.com/lector/).
+
 ## Requirements
 
 - macOS 15 or later, on Apple Silicon or Intel.
