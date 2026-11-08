@@ -157,12 +157,14 @@ translation.
 | Translations | 10 a month | 30 a month | Unlimited |
 | Live translation (beta) | No | No | Yes |
 
-Text and Translate are one-time purchases from
-[Gumroad](https://magicelk235.gumroad.com/l/lector). A Text license can be
-upgraded to Translate for $6 with the
-[upgrade](https://magicelk235.gumroad.com/l/lector-upgrade). Paste the key from
-your receipt into Settings › License; for an upgrade, enter the Text key first,
-then the upgrade key.
+Text and Translate are one-time purchases through Polar:
+[buy Text](https://buy.polar.sh/polar_cl_tkgqF9gxvlZNU5Ge769WkrAE6Slzsr5e2PmnI4HV1NT) or
+[buy Translate](https://buy.polar.sh/polar_cl_DRiORzR9dAEomeWXX9oMsMB5YfOMM0lEn58xm0dzoKs).
+A Text license can be upgraded to Translate for $6 with the
+[upgrade](https://buy.polar.sh/polar_cl_AI6jll9ffzZxapGmXkblVNZEQE0yecYUrLbcU2qceSe).
+Polar emails you a link to your purchase, and the key is there. Paste it into
+Settings › License; for an upgrade, enter the Text key first, then the upgrade
+key. Keys bought on Gumroad before the move keep working.
 
 A grab counts once text is found, and a translation counts when it starts,
 whether from ⌘⇧1 or Tab in the word picker. Counts start over on the first of
@@ -215,15 +217,15 @@ license key, the day Lector first ran, and how many grabs and translations
 you've made this month; never the text you captured.
 
 Lector downloads language packs from Hugging Face, only as described under
-Languages. If you enter a license key, Lector sends that key to Gumroad to check
-it, when you enter it and again at each launch. A key Gumroad has confirmed
-keeps working for 30 days without a connection. The Buy and Upgrade buttons
-open Gumroad with a few tags in the link: where in Lector you pressed the
-button, your current plan, this month's grab and translation counts, and
-roughly how long Lector has been installed (under 2 days, up to a week, up to
-a month, or longer). Gumroad shows them to the seller alongside the sale. If
-you allow update checks, Lector asks GitHub once a day whether there's a new
-version. Your text never leaves the Mac.
+Languages. If you enter a license key, Lector sends that key to Polar to check
+it (or to Gumroad, for a key bought there before), when you enter it and again
+at each launch. A confirmed key keeps working for 30 days without a connection.
+The Buy and Upgrade buttons open Polar's checkout with a few tags in the link:
+where in Lector you pressed the button, your current plan, this month's grab
+and translation counts, and roughly how long Lector has been installed (under 2
+days, up to a week, up to a month, or longer). Polar shows them to the seller
+alongside the sale. If you allow update checks, Lector asks GitHub once a day
+whether there's a new version. Your text never leaves the Mac.
 
 ## Limitations
 

@@ -322,6 +322,7 @@ private struct AcknowledgementsSettings: View {
                   files: ["onnxruntime-LICENSE.txt", "onnxruntime-ThirdPartyNotices.txt"]),
         // CC BY asks for the authors by name.
         Component(name: "Opus-MT by Helsinki-NLP", licence: "CC BY 4.0", files: ["opus-mt-NOTICE.txt"]),
+        Component(name: "Polar Checkout", licence: "Apache 2.0", files: ["polar-checkout-LICENSE.txt"]),
     ]
 
     var body: some View {

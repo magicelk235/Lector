@@ -44,7 +44,7 @@ struct LicenseView: View {
                 if license.stored == nil || license.tier == .text {
                     HStack {
                         TextField("License key", text: $key,
-                                  prompt: Text(license.stored == nil ? "Paste your key from Gumroad"
+                                  prompt: Text(license.stored == nil ? "Paste your license key"
                                                                      : "Paste your upgrade key"))
                             .textFieldStyle(.roundedBorder)
                             .labelsHidden()
@@ -78,12 +78,12 @@ struct LicenseView: View {
                 Section("Buy") {
                     if license.tier == .free {
                         buyRow("Text", detail: "Unlimited grabs, 30 translations a month", price: "$9",
-                               url: AppConstants.storeURL, version: "Text")
+                               url: AppConstants.textCheckoutURL)
                         buyRow("Translate", detail: "Unlimited grabs and translations, live translation (beta)",
-                               price: "$15", url: AppConstants.storeURL, version: "Translate")
+                               price: "$15", url: AppConstants.translateCheckoutURL)
                     } else {
                         buyRow("Upgrade to Translate", detail: "Unlimited translations, live translation (beta)",
-                               price: "$6", url: AppConstants.upgradeURL)
+                               price: "$6", url: AppConstants.upgradeCheckoutURL)
                     }
                 }
             }
@@ -111,14 +111,13 @@ struct LicenseView: View {
         }
     }
 
-    /// `version` names the Gumroad version to preselect at checkout.
-    private func buyRow(_ title: String, detail: String, price: String, url: URL,
-                        version: String? = nil) -> some View {
+    private func buyRow(_ title: String, detail: String, price: String, url: URL) -> some View {
         LabeledContent {
             Button("Buy \(price)") {
-                NSWorkspace.shared.open(BuyLink.url(
-                    url, version: version, from: origin, tier: license.tier, grabs: usage.used(.grab),
-                    translations: usage.used(.translation), daysSinceFirstLaunch: usage.daysSinceFirstLaunch))
+                let link = BuyLink.url(url, from: origin, tier: license.tier, grabs: usage.used(.grab),
+                                       translations: usage.used(.translation),
+                                       daysSinceFirstLaunch: usage.daysSinceFirstLaunch)
+                CheckoutWindow.show(link, title: "Lector \(title)")
             }
         } label: {
             Text(title)

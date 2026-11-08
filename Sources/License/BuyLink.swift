@@ -1,9 +1,9 @@
 import Foundation
 
-/// The Buy and Upgrade links. They open Gumroad's checkout with the version already
-/// chosen, skipping the product page, and are tagged so a sale's UTM fields say where in
-/// Lector the button was pressed, on which plan, how much of this month's grabs and
-/// translations had been used, and roughly how long Lector had been installed.
+/// The Buy and Upgrade links. They open a product's Polar checkout, tagged so the order's
+/// metadata says where in Lector the button was pressed, on which plan, how much of this
+/// month's grabs and translations had been used, and roughly how long Lector had been
+/// installed.
 enum BuyLink {
     /// Where the Buy button was pressed.
     enum Origin: Equatable {
@@ -12,15 +12,10 @@ enum BuyLink {
         case window(Limit?)
     }
 
-    /// `version` is the Gumroad version name to preselect ("Text", "Translate"), or nil
-    /// for a product without versions.
-    static func url(_ base: URL, version: String? = nil, from origin: Origin, tier: Tier, grabs: Int,
-                    translations: Int, daysSinceFirstLaunch days: Int) -> URL {
-        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return base }
-        let checkout = [URLQueryItem(name: "wanted", value: "true")]
-            + (version.map { [URLQueryItem(name: "variant", value: $0)] } ?? [])
-        // Gumroad only records UTM tags when source, medium and campaign are all present.
-        components.queryItems = checkout + [
+    static func url(_ checkout: URL, from origin: Origin, tier: Tier, grabs: Int, translations: Int,
+                    daysSinceFirstLaunch days: Int) -> URL {
+        guard var components = URLComponents(url: checkout, resolvingAgainstBaseURL: false) else { return checkout }
+        components.queryItems = [
             URLQueryItem(name: "utm_source", value: "lector-app"),
             URLQueryItem(name: "utm_medium", value: "app"),
             URLQueryItem(name: "utm_campaign", value: campaign(origin)),
@@ -30,7 +25,7 @@ enum BuyLink {
         // URLComponents leaves "+" alone, which a server reads back as a space.
         components.percentEncodedQuery = components.percentEncodedQuery?
             .replacingOccurrences(of: "+", with: "%2B")
-        return components.url ?? base
+        return components.url ?? checkout
     }
 
     private static func campaign(_ origin: Origin) -> String {
